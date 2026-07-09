@@ -30,6 +30,11 @@ var CACHE_REGISTRY_TTL = 2;
 // one holder at a time; 30s is generous vs. the ~1s of work we do inside.
 var LOCK_TIMEOUT_MS = 30 * 1000;
 
+// How often (in items processed) runBatch_ pushes a progress update into
+// the registry mid-batch so the queue view reflects reality instead of
+// sitting at 0/N until the first 4.5-minute checkpoint fires.
+var PROGRESS_UPDATE_INTERVAL = 10;
+
 var RESUME_TRIGGER_HANDLER = 'resumeTransfer';
 
 // Serialized-state ceiling before we refuse to persist. ScriptProperties per-store
@@ -569,6 +574,7 @@ function runBatch_() {
   // straight to finalize (which will retry mail).
   var alreadyDone = state.cursor >= state.plan.length;
   if (!alreadyDone) {
+    var sinceProgressPush = 0;
     while (state.cursor < state.plan.length) {
       if (shouldCheckpoint(startedAtMs, Date.now(), TIME_BUDGET_MS)) {
         withScriptLock_(function () {
@@ -584,6 +590,17 @@ function runBatch_() {
       var item = state.plan[state.cursor];
       state.log.push(attemptTransfer_(item, newOwner));
       state.cursor++;
+      sinceProgressPush++;
+      // Cheap mid-batch progress update — the registry write is small
+      // (meta only, no plan or log), and the queue view starts reflecting
+      // real progress instead of sitting at 0/N for minutes.
+      if (sinceProgressPush >= PROGRESS_UPDATE_INTERVAL) {
+        sinceProgressPush = 0;
+        var cursorSnapshot = state.cursor;
+        withScriptLock_(function () {
+          updateJobMeta_(job.jobId, { processed: cursorSnapshot });
+        });
+      }
     }
   }
 
