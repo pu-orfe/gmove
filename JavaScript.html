@@ -16,10 +16,7 @@
     treeCard:        document.getElementById('tree-card'),
     tree:            document.getElementById('tree'),
     counters:        document.getElementById('counters'),
-    expandAllBtn:    document.getElementById('expandAllBtn'),
-    collapseAllBtn:  document.getElementById('collapseAllBtn'),
-    selectAllBtn:    document.getElementById('selectAllBtn'),
-    clearAllBtn:     document.getElementById('clearAllBtn'),
+    selectAllToggle: document.getElementById('selectAllToggle'),
     previewCard:     document.getElementById('preview-card'),
     previewSummary:  document.getElementById('preview-summary'),
     previewPlanList: document.getElementById('preview-plan-list'),
@@ -63,10 +60,13 @@
   els.loadMyDriveBtn.addEventListener('click', onLoadMyDrive);
   els.previewBtn.addEventListener('click', onPreview);
   els.commitBtn.addEventListener('click', onCommit);
-  els.expandAllBtn.addEventListener('click', onExpandAllInView);
-  els.collapseAllBtn.addEventListener('click', onCollapseAll);
-  els.selectAllBtn.addEventListener('click', onSelectAllInView);
-  els.clearAllBtn.addEventListener('click', onClearAll);
+  els.selectAllToggle.addEventListener('change', function () {
+    if (els.selectAllToggle.checked) {
+      onSelectAllInView();
+    } else {
+      onClearAll();
+    }
+  });
   els.closePreviewBtn.addEventListener('click', hidePreview);
   els.refreshQueueBtn.addEventListener('click', function () { fetchQueue(true); });
 
@@ -705,37 +705,6 @@
     }
   }
 
-  function onExpandAllInView() {
-    // Only expand folders whose children are already loaded — do not auto-fetch.
-    var lis = els.tree.querySelectorAll('li');
-    for (var i = 0; i < lis.length; i++) {
-      var id = lis[i].dataset.id;
-      var n = state.nodes[id];
-      if (!n || !n.isFolder || !n.childrenLoaded) continue;
-      var ul = lis[i].querySelector(':scope > ul');
-      if (!ul) continue;
-      ul.style.display = '';
-      n.expanded = true;
-      updateToggleGlyph(lis[i]);
-    }
-  }
-
-  function onCollapseAll() {
-    var lis = els.tree.querySelectorAll('li');
-    for (var i = 0; i < lis.length; i++) {
-      var id = lis[i].dataset.id;
-      var n = state.nodes[id];
-      if (!n || !n.isFolder) continue;
-      var ul = lis[i].querySelector(':scope > ul');
-      if (!ul) continue;
-      // Keep the root open — collapsing it hides everything.
-      if (id === state.rootId) continue;
-      ul.style.display = 'none';
-      n.expanded = false;
-      updateToggleGlyph(lis[i]);
-    }
-  }
-
   // ---- Ancestor / lock helpers -------------------------------------------
   function hasRecursiveAncestor(id) {
     var cur = state.nodes[id];
@@ -861,6 +830,41 @@
     // Any selection change invalidates a prior preview — the plan it showed
     // is no longer the plan the server would compute now.
     hidePreview();
+    updateSelectAllToggleState();
+  }
+
+  function updateSelectAllToggleState() {
+    if (!els.selectAllToggle) return;
+    var lis = els.tree.querySelectorAll('li[data-id]');
+    var totalSelectable = 0;
+    var selectedCount = 0;
+    for (var i = 0; i < lis.length; i++) {
+      var id = lis[i].dataset.id;
+      var n = state.nodes[id];
+      if (!n || !n.transferable) continue;
+      if (hasRecursiveAncestor(id)) continue;
+      totalSelectable++;
+      if (isEffectivelyChecked(id)) {
+        selectedCount++;
+      }
+    }
+    if (totalSelectable === 0) {
+      els.selectAllToggle.checked = false;
+      els.selectAllToggle.indeterminate = false;
+      els.selectAllToggle.disabled = true;
+    } else if (selectedCount === 0) {
+      els.selectAllToggle.checked = false;
+      els.selectAllToggle.indeterminate = false;
+      els.selectAllToggle.disabled = false;
+    } else if (selectedCount === totalSelectable) {
+      els.selectAllToggle.checked = true;
+      els.selectAllToggle.indeterminate = false;
+      els.selectAllToggle.disabled = false;
+    } else {
+      els.selectAllToggle.checked = false;
+      els.selectAllToggle.indeterminate = true;
+      els.selectAllToggle.disabled = false;
+    }
   }
 
   // ---- Preview (dry run) --------------------------------------------------
