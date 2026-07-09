@@ -25,6 +25,21 @@ echo "Pushing project files…"
 clasp push -f
 
 echo "Deploying new web-app version…"
-clasp deploy --description "gmove deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOY_OUT="$(clasp deploy --description "gmove deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>&1 | tee /dev/stderr)"
 
-echo "Open in editor with: clasp open"
+# Extract deployment id (line looks like: "Deployed AKfy... @N")
+DEPLOY_ID="$(printf '%s\n' "$DEPLOY_OUT" | awk '/^Deployed /{print $2; exit}')"
+
+# clasp v3 split `clasp open` into subcommands.
+CLASP_MAJOR="$(clasp --version 2>/dev/null | awk -F. '{print $1}')"
+if [[ "${CLASP_MAJOR:-0}" -ge 3 ]]; then
+  echo ""
+  echo "Editor:  clasp open-script"
+  echo "Logs:    clasp open-logs"
+  if [[ -n "$DEPLOY_ID" ]]; then
+    echo "Web app: clasp open-web-app $DEPLOY_ID"
+    echo "Direct:  https://script.google.com/macros/s/$DEPLOY_ID/exec"
+  fi
+else
+  echo "Open in editor with: clasp open"
+fi

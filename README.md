@@ -124,9 +124,15 @@ clasp create --title "Drive Ownership Transfer" --rootDir .
 > (already present in `appsscript.json`) and published by `clasp deploy`.
 > If you pass `--type webapp` clasp errors with `Invalid container file type`.
 
-`deploy.sh` runs `clasp push -f` then `clasp deploy --description "…"`.
-Grab the resulting web-app URL from `clasp open` → **Deploy** →
-**Manage deployments** (or `clasp deployments`).
+`deploy.sh` runs `clasp push -f` then `clasp deploy --description "…"`,
+parses the resulting deployment ID out of the output, and prints the
+direct web-app URL (`https://script.google.com/macros/s/<id>/exec`).
+
+> **clasp v3 note.** `clasp open` was removed in v3 — commands were split
+> into `clasp open-script`, `clasp open-web-app <deploymentId>`,
+> `clasp open-logs`, `clasp open-container`, `clasp open-api-console`,
+> and `clasp open-credentials-setup`. `clasp deployments` still lists
+> deployments.
 
 **Consent gate.** The first invocation of the web-app URL triggers
 Google's OAuth consent screen because the manifest requests Drive/Mail
@@ -294,10 +300,11 @@ bottom of the file consume tokens only and do not need to change.
 - **Timeout at exactly 6:00** — you're hitting the hard Apps Script quota
   before `shouldCheckpoint()` fires. Lower `TIME_BUDGET_MS` in `Logic.gs`
   (e.g. from 4.5 → 3.5 minutes) and re-deploy.
-- **No email arrived** — check the trigger list at `clasp open` →
-  **Triggers**. If a `resumeTransfer` trigger is still queued, the run is
-  still in progress. Stackdriver logs (Executions view) will show any
-  `MailApp.sendEmail` failure.
+- **No email arrived** — check the trigger list at `clasp open-script` →
+  **Triggers** (in clasp v3), or the editor's Triggers tab directly. If a
+  `resumeTransfer` trigger is still queued, the run is still in progress.
+  Stackdriver logs — `clasp open-logs` — will show any `MailApp.sendEmail`
+  failure.
 
 ## 7. Notes
 
