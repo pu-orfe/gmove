@@ -3,111 +3,180 @@
   'use strict';
 
   var els = {
-    targetFolderId: document.getElementById('targetFolderId'),
-    newOwnerEmail:  document.getElementById('newOwnerEmail'),
-    scanBtn:        document.getElementById('scanBtn'),
-    commitBtn:      document.getElementById('commitBtn'),
-    status:         document.getElementById('status'),
-    treeCard:       document.getElementById('tree-card'),
-    tree:           document.getElementById('tree'),
-    counters:       document.getElementById('counters')
+    targetFolderId:  document.getElementById('targetFolderId'),
+    newOwnerEmail:   document.getElementById('newOwnerEmail'),
+    loadBtn:         document.getElementById('loadBtn'),
+    commitBtn:       document.getElementById('commitBtn'),
+    status:          document.getElementById('status'),
+    treeCard:        document.getElementById('tree-card'),
+    tree:            document.getElementById('tree'),
+    counters:        document.getElementById('counters'),
+    expandAllBtn:    document.getElementById('expandAllBtn'),
+    collapseAllBtn:  document.getElementById('collapseAllBtn'),
+    selectAllBtn:    document.getElementById('selectAllBtn'),
+    clearAllBtn:     document.getElementById('clearAllBtn')
   };
 
+  // -------------------------------------------------------------------------
+  // State
+  //
+  // nodes:     id → node metadata (id, name, isFolder, owner, transferable,
+  //                                parentId, childrenLoaded, expanded)
+  // childrenById: id → array of child ids in render order
+  // recursive: set of folder ids the user chose "transfer everything inside"
+  // explicit:  set of individually-selected item ids (not covered by a recursive ancestor)
+  //
+  // Effective checked = id ∈ recursive || id ∈ explicit || any ancestor in recursive.
+  // Locked            = !transferable  || any ancestor in recursive.
+  //
+  // The server sees only `recursive` and `explicit`. It walks each recursive
+  // subtree with DriveApp and produces the actual plan — the client never
+  // needs to have expanded a folder for it to be transferred.
+  // -------------------------------------------------------------------------
   var state = {
-    tree: null,
-    activeUserEmail: null,
-    nodeById: {}
+    activeUserEmail: '',
+    rootId: null,
+    nodes: Object.create(null),
+    childrenById: Object.create(null),
+    recursive: Object.create(null),
+    explicit:  Object.create(null)
   };
 
-  els.scanBtn.addEventListener('click', onScan);
+  els.loadBtn.addEventListener('click', onLoad);
   els.commitBtn.addEventListener('click', onCommit);
+  els.expandAllBtn.addEventListener('click', onExpandAllInView);
+  els.collapseAllBtn.addEventListener('click', onCollapseAll);
+  els.selectAllBtn.addEventListener('click', onSelectAllInView);
+  els.clearAllBtn.addEventListener('click', onClearAll);
 
+  // ---- Status helpers -----------------------------------------------------
   function setStatus(msg, kind) {
     els.status.textContent = msg || '';
     els.status.className = 'pt-status' + (kind ? ' pt-status--' + kind : '');
   }
 
-  function onScan() {
+  // ---- Root load ----------------------------------------------------------
+  function onLoad() {
     var id = (els.targetFolderId.value || '').trim();
     if (!id) { setStatus('Enter a target folder ID first.', 'error'); return; }
-    els.scanBtn.disabled = true;
-    els.commitBtn.disabled = true;
-    setStatus('Scanning…');
+    els.loadBtn.disabled = true;
+    setStatus('Loading folder…');
     google.script.run
-      .withSuccessHandler(onScanSuccess)
-      .withFailureHandler(onScanFailure)
-      .scanDirectory(id);
+      .withSuccessHandler(function (result) {
+        onBrowseSuccess(result, /*isRoot*/true);
+        els.loadBtn.disabled = false;
+        els.commitBtn.disabled = false;
+        setStatus('Loaded ' + result.node.name + '. Click ▸ to expand a folder. Active user: ' + result.activeUserEmail, 'ok');
+      })
+      .withFailureHandler(function (err) {
+        els.loadBtn.disabled = false;
+        setStatus('Load failed: ' + errMsg(err), 'error');
+      })
+      .browseFolder(id);
   }
 
-  function onScanSuccess(result) {
-    state.tree = result.tree;
+  function onBrowseSuccess(result, isRoot) {
     state.activeUserEmail = result.activeUserEmail;
-    state.nodeById = {};
-    indexNodes(state.tree);
-    renderTree(state.tree);
+    var node = result.node;
+    if (isRoot) {
+      state.rootId = node.id;
+      state.nodes = Object.create(null);
+      state.childrenById = Object.create(null);
+      state.recursive = Object.create(null);
+      state.explicit = Object.create(null);
+      els.tree.innerHTML = '';
+    }
+    registerNode(node, null);
+    var childIds = [];
+    for (var i = 0; i < result.children.length; i++) {
+      var c = result.children[i];
+      registerNode(c, node.id);
+      childIds.push(c.id);
+    }
+    state.childrenById[node.id] = childIds;
+    state.nodes[node.id].childrenLoaded = true;
+    state.nodes[node.id].truncated = !!result.truncated;
+    state.nodes[node.id].expanded = true;
+
+    if (isRoot) {
+      var ul = document.createElement('ul');
+      ul.appendChild(buildLi(node.id));
+      els.tree.appendChild(ul);
+      els.treeCard.hidden = false;
+    } else {
+      // Insert children under the existing li for `node`.
+      var li = liById(node.id);
+      if (!li) return;
+      var childUl = li.querySelector(':scope > ul');
+      if (!childUl) {
+        childUl = document.createElement('ul');
+        li.appendChild(childUl);
+      }
+      childUl.innerHTML = '';
+      for (var j = 0; j < childIds.length; j++) {
+        childUl.appendChild(buildLi(childIds[j]));
+      }
+      if (result.truncated) {
+        var warn = document.createElement('li');
+        warn.className = 'pt-node pt-node--skip';
+        warn.innerHTML = '<span class="pt-badge">Truncated at ' + result.cap +
+          ' children — narrower selection recommended for this folder.</span>';
+        childUl.appendChild(warn);
+      }
+      updateToggleGlyph(li);
+    }
+    refreshAllVisibleState();
     updateCounters();
-    els.treeCard.hidden = false;
-    els.scanBtn.disabled = false;
-    els.commitBtn.disabled = false;
-    setStatus('Scan complete. Active user: ' + state.activeUserEmail, 'ok');
   }
 
-  function onScanFailure(err) {
-    els.scanBtn.disabled = false;
-    setStatus('Scan failed: ' + (err && err.message ? err.message : err), 'error');
+  function registerNode(n, parentId) {
+    if (!state.nodes[n.id]) state.nodes[n.id] = { id: n.id };
+    var slot = state.nodes[n.id];
+    slot.id = n.id;
+    slot.name = n.name;
+    slot.isFolder = !!n.isFolder;
+    slot.owner = n.owner || '';
+    slot.transferable = !!n.transferable;
+    slot.parentId = parentId != null ? parentId : slot.parentId || null;
+    slot.mimeType = n.mimeType || '';
+    if (slot.childrenLoaded === undefined) slot.childrenLoaded = false;
+    if (slot.expanded === undefined) slot.expanded = false;
   }
 
-  function indexNodes(node) {
-    if (!node) return;
-    state.nodeById[node.id] = node;
-    if (node.children) for (var i = 0; i < node.children.length; i++) indexNodes(node.children[i]);
-  }
-
-  function renderTree(root) {
-    els.tree.innerHTML = '';
-    var ul = document.createElement('ul');
-    ul.appendChild(renderNode(root, ''));
-    els.tree.appendChild(ul);
-  }
-
-  function renderNode(node) {
+  // ---- DOM builders -------------------------------------------------------
+  function buildLi(nodeId) {
+    var n = state.nodes[nodeId];
     var li = document.createElement('li');
-    li.dataset.id = node.id;
+    li.dataset.id = nodeId;
 
     var row = document.createElement('div');
-    row.className = 'pt-node' + (node.transferable ? '' : ' pt-node--skip');
+    row.className = 'pt-node';
+    row.dataset.id = nodeId;
 
     var toggle = document.createElement('span');
-    toggle.className = 'pt-node__toggle' + ((node.children && node.children.length) ? '' : ' pt-node__toggle--leaf');
-    toggle.textContent = (node.children && node.children.length) ? '▾' : '';
-    var childrenUl = null;
-    toggle.addEventListener('click', function () {
-      if (!childrenUl) return;
-      var open = childrenUl.style.display !== 'none';
-      childrenUl.style.display = open ? 'none' : '';
-      toggle.textContent = open ? '▸' : '▾';
-    });
+    toggle.className = 'pt-node__toggle' + (n.isFolder ? '' : ' pt-node__toggle--leaf');
+    toggle.textContent = n.isFolder ? '▸' : '';
+    if (n.isFolder) {
+      toggle.addEventListener('click', function () { onToggleFolder(nodeId); });
+    }
 
     var checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
-    checkbox.checked = !!node.transferable;
-    checkbox.disabled = !node.transferable;
-    checkbox.dataset.id = node.id;
-    checkbox.addEventListener('change', function () { onCheckboxChange(node.id, checkbox.checked); });
-    node._checkboxEl = checkbox;
+    checkbox.dataset.id = nodeId;
+    checkbox.addEventListener('change', function () { onCheckboxChange(nodeId, checkbox.checked); });
 
     var icon = document.createElement('span');
     icon.className = 'pt-node__icon';
-    icon.textContent = node.isFolder ? '📁' : '📄';
+    icon.textContent = n.isFolder ? '📁' : '📄';
 
     var label = document.createElement('span');
-    label.className = 'pt-node__label' + (node.isFolder ? ' pt-node__label--folder' : '');
-    label.textContent = node.name;
+    label.className = 'pt-node__label' + (n.isFolder ? ' pt-node__label--folder' : '');
+    label.textContent = n.name;
 
     var idSpan = document.createElement('span');
     idSpan.className = 'pt-node__id';
-    idSpan.textContent = node.id.slice(0, 10) + '…';
-    idSpan.title = node.id;
+    idSpan.textContent = (n.id || '').slice(0, 10) + '…';
+    idSpan.title = n.id;
 
     row.appendChild(toggle);
     row.appendChild(checkbox);
@@ -115,118 +184,277 @@
     row.appendChild(label);
     row.appendChild(idSpan);
 
-    if (!node.transferable) {
+    if (!n.transferable) {
       var badge = document.createElement('span');
       badge.className = 'pt-badge';
-      badge.textContent = node.owner
-        ? 'Owned by ' + node.owner + ' — will skip'
+      badge.textContent = n.owner
+        ? 'Owned by ' + n.owner + ' — will skip'
         : 'No single owner (shared drive?) — will skip';
       row.appendChild(badge);
     }
-
     li.appendChild(row);
 
-    if (node.children && node.children.length) {
-      childrenUl = document.createElement('ul');
-      for (var i = 0; i < node.children.length; i++) {
-        childrenUl.appendChild(renderNode(node.children[i]));
-      }
-      li.appendChild(childrenUl);
+    // Children container (populated when the folder is expanded).
+    if (n.isFolder && state.childrenById[nodeId]) {
+      var ul = document.createElement('ul');
+      var ids = state.childrenById[nodeId];
+      for (var i = 0; i < ids.length; i++) ul.appendChild(buildLi(ids[i]));
+      li.appendChild(ul);
+      if (!n.expanded) ul.style.display = 'none';
     }
     return li;
   }
 
-  function onCheckboxChange(nodeId, checked) {
-    var node = state.nodeById[nodeId];
-    if (!node) return;
-    cascade(node, checked);
+  function liById(id) {
+    return els.tree.querySelector('li[data-id="' + cssEsc(id) + '"]');
+  }
+  function cssEsc(s) {
+    // For our purposes drive ids are alnum + - + _; safe enough to inject.
+    return String(s).replace(/[^a-zA-Z0-9_\-]/g, '');
+  }
+
+  function updateToggleGlyph(li) {
+    var n = state.nodes[li.dataset.id];
+    var toggle = li.querySelector(':scope > .pt-node > .pt-node__toggle');
+    var ul = li.querySelector(':scope > ul');
+    if (!toggle) return;
+    if (!n.isFolder) { toggle.textContent = ''; return; }
+    if (!n.childrenLoaded) { toggle.textContent = '▸'; return; }
+    var open = ul && ul.style.display !== 'none';
+    toggle.textContent = open ? '▾' : '▸';
+  }
+
+  // ---- Expand / collapse --------------------------------------------------
+  function onToggleFolder(id) {
+    var n = state.nodes[id];
+    if (!n || !n.isFolder) return;
+    if (!n.childrenLoaded) {
+      setStatus('Loading ' + n.name + '…');
+      google.script.run
+        .withSuccessHandler(function (result) {
+          onBrowseSuccess(result, /*isRoot*/false);
+          setStatus('', 'ok');
+        })
+        .withFailureHandler(function (err) {
+          setStatus('Cannot list ' + n.name + ': ' + errMsg(err), 'error');
+        })
+        .browseFolder(id);
+      return;
+    }
+    // Toggle visible state
+    var li = liById(id);
+    if (!li) return;
+    var ul = li.querySelector(':scope > ul');
+    if (!ul) return;
+    n.expanded = ul.style.display === 'none';
+    ul.style.display = n.expanded ? '' : 'none';
+    updateToggleGlyph(li);
+  }
+
+  function onExpandAllInView() {
+    // Only expand folders whose children are already loaded — do not auto-fetch.
+    var lis = els.tree.querySelectorAll('li');
+    for (var i = 0; i < lis.length; i++) {
+      var id = lis[i].dataset.id;
+      var n = state.nodes[id];
+      if (!n || !n.isFolder || !n.childrenLoaded) continue;
+      var ul = lis[i].querySelector(':scope > ul');
+      if (!ul) continue;
+      ul.style.display = '';
+      n.expanded = true;
+      updateToggleGlyph(lis[i]);
+    }
+  }
+
+  function onCollapseAll() {
+    var lis = els.tree.querySelectorAll('li');
+    for (var i = 0; i < lis.length; i++) {
+      var id = lis[i].dataset.id;
+      var n = state.nodes[id];
+      if (!n || !n.isFolder) continue;
+      var ul = lis[i].querySelector(':scope > ul');
+      if (!ul) continue;
+      // Keep the root open — collapsing it hides everything.
+      if (id === state.rootId) continue;
+      ul.style.display = 'none';
+      n.expanded = false;
+      updateToggleGlyph(lis[i]);
+    }
+  }
+
+  // ---- Ancestor / lock helpers -------------------------------------------
+  function hasRecursiveAncestor(id) {
+    var cur = state.nodes[id];
+    while (cur && cur.parentId != null) {
+      if (state.recursive[cur.parentId]) return true;
+      cur = state.nodes[cur.parentId];
+    }
+    return false;
+  }
+
+  function isEffectivelyChecked(id) {
+    if (state.recursive[id]) return true;
+    if (state.explicit[id])  return true;
+    return hasRecursiveAncestor(id);
+  }
+
+  function isLocked(id) {
+    var n = state.nodes[id];
+    if (!n || !n.transferable) return true;
+    return hasRecursiveAncestor(id);
+  }
+
+  // ---- Checkbox interaction ----------------------------------------------
+  function onCheckboxChange(id, checkedNow) {
+    var n = state.nodes[id];
+    if (!n || !n.transferable) return;
+    if (hasRecursiveAncestor(id)) {
+      // Locked — should not be reachable because the input is disabled, but
+      // if it somehow was, restore the checkbox state and bail.
+      refreshAllVisibleState();
+      return;
+    }
+    if (checkedNow) {
+      if (n.isFolder) {
+        state.recursive[id] = true;
+        // Any explicit descendant selections are now redundant — clear them.
+        // (Not strictly required for correctness because the server-walk on
+        // commit dedupes by id, but keeping client state clean is cheap.)
+        clearExplicitBelow(id);
+      } else {
+        state.explicit[id] = true;
+      }
+    } else {
+      delete state.recursive[id];
+      delete state.explicit[id];
+    }
+    refreshAllVisibleState();
     updateCounters();
   }
 
-  function cascade(node, checked) {
-    if (!node.children) return;
-    for (var i = 0; i < node.children.length; i++) {
-      var c = node.children[i];
-      if (c.transferable && c._checkboxEl) c._checkboxEl.checked = checked;
-      cascade(c, checked);
+  function clearExplicitBelow(folderId) {
+    // Walk the loaded subtree; anything with folderId as an ancestor is cleared.
+    var ids = state.childrenById[folderId];
+    if (!ids) return;
+    for (var i = 0; i < ids.length; i++) {
+      delete state.explicit[ids[i]];
+      delete state.recursive[ids[i]];
+      var child = state.nodes[ids[i]];
+      if (child && child.isFolder) clearExplicitBelow(ids[i]);
     }
   }
 
-  function collectSelected(node, acc) {
-    if (!node) return acc;
-    if (node.transferable && node._checkboxEl && node._checkboxEl.checked) acc.push(node.id);
-    if (node.children) for (var i = 0; i < node.children.length; i++) collectSelected(node.children[i], acc);
-    return acc;
+  function refreshAllVisibleState() {
+    var lis = els.tree.querySelectorAll('li[data-id]');
+    for (var i = 0; i < lis.length; i++) {
+      var li = lis[i];
+      var id = li.dataset.id;
+      var n = state.nodes[id];
+      if (!n) continue;
+      var row = li.querySelector(':scope > .pt-node');
+      var box = row ? row.querySelector('input[type="checkbox"]') : null;
+      if (!row || !box) continue;
+
+      var locked = isLocked(id);
+      var checked = isEffectivelyChecked(id);
+
+      box.checked = checked;
+      box.disabled = locked;
+
+      row.classList.toggle('pt-node--skip',   !n.transferable);
+      row.classList.toggle('pt-node--locked', locked && n.transferable);
+    }
   }
 
+  // ---- Batch actions ------------------------------------------------------
+  function onSelectAllInView() {
+    // Every unlocked transferable box currently in the DOM becomes checked.
+    // Folders → recursive. Files → explicit.
+    var lis = els.tree.querySelectorAll('li[data-id]');
+    for (var i = 0; i < lis.length; i++) {
+      var id = lis[i].dataset.id;
+      var n = state.nodes[id];
+      if (!n || !n.transferable) continue;
+      if (hasRecursiveAncestor(id)) continue;
+      if (n.isFolder) state.recursive[id] = true;
+      else            state.explicit[id]  = true;
+    }
+    refreshAllVisibleState();
+    updateCounters();
+  }
+
+  function onClearAll() {
+    state.recursive = Object.create(null);
+    state.explicit  = Object.create(null);
+    refreshAllVisibleState();
+    updateCounters();
+  }
+
+  // ---- Counters -----------------------------------------------------------
   function updateCounters() {
-    var counts = { total: 0, transferable: 0, notOwned: 0, selected: 0 };
-    (function walk(n) {
-      if (!n) return;
-      counts.total++;
-      if (n.transferable) {
-        counts.transferable++;
-        if (n._checkboxEl && n._checkboxEl.checked) counts.selected++;
-      } else {
-        counts.notOwned++;
-      }
-      if (n.children) for (var i = 0; i < n.children.length; i++) walk(n.children[i]);
-    })(state.tree);
-    els.counters.textContent =
-      counts.total + ' items · ' +
-      counts.transferable + ' transferable · ' +
-      counts.notOwned + ' not owned · ' +
-      counts.selected + ' selected';
+    var recCount = Object.keys(state.recursive).length;
+    var expCount = Object.keys(state.explicit).length;
+    var text;
+    if (recCount === 0 && expCount === 0) {
+      text = 'Nothing selected.';
+    } else {
+      text = recCount + ' folder' + (recCount === 1 ? '' : 's') + ' recursive · ' +
+             expCount + ' individual item' + (expCount === 1 ? '' : 's');
+    }
+    els.counters.textContent = text;
   }
 
+  // ---- Commit -------------------------------------------------------------
   function onCommit() {
     var newOwner = (els.newOwnerEmail.value || '').trim();
     if (!newOwner) { setStatus('Enter a new owner email.', 'error'); return; }
-    if (!state.tree) { setStatus('Run a scan first.', 'error'); return; }
-    var selected = collectSelected(state.tree, []);
-    if (selected.length === 0) {
+    var recursiveIds = Object.keys(state.recursive);
+    var explicitIds  = Object.keys(state.explicit);
+    if (recursiveIds.length === 0 && explicitIds.length === 0) {
       setStatus('Nothing selected — nothing to do.', 'error');
       return;
     }
-    if (!confirm('Transfer ' + selected.length + ' item(s) to ' + newOwner + '?')) return;
-    els.scanBtn.disabled = true;
+    var msg = 'Transfer ownership to ' + newOwner + '?\n\n' +
+      recursiveIds.length + ' folder(s) will be transferred *with everything inside*.\n' +
+      explicitIds.length  + ' individual item(s) will be transferred.\n\n' +
+      'Non-owned items in the walk will be skipped automatically.';
+    if (!confirm(msg)) return;
+    els.loadBtn.disabled = true;
     els.commitBtn.disabled = true;
-    setStatus('Committing… (large jobs will resume via a time-driven trigger; you will receive an email report)');
+    setStatus('Committing… large jobs will resume via a time-driven trigger; you will receive an email report.');
     google.script.run
       .withSuccessHandler(onCommitSuccess)
       .withFailureHandler(onCommitFailure)
       .commitTransfer({
         targetFolderId: (els.targetFolderId.value || '').trim(),
         newOwnerEmail:  newOwner,
-        tree:           stripEls(state.tree),
-        selectedIds:    selected
+        selection: {
+          recursiveIds: recursiveIds,
+          explicitIds:  explicitIds
+        }
       });
   }
 
-  function stripEls(node) {
-    var copy = {
-      id: node.id, name: node.name, path: node.path,
-      isFolder: node.isFolder, owner: node.owner,
-      mimeType: node.mimeType, transferable: node.transferable,
-      children: []
-    };
-    if (node.children) for (var i = 0; i < node.children.length; i++) copy.children.push(stripEls(node.children[i]));
-    return copy;
-  }
-
   function onCommitSuccess(result) {
-    els.scanBtn.disabled = false;
+    els.loadBtn.disabled = false;
     els.commitBtn.disabled = false;
     if (result && result.done) {
       setStatus('Transfer complete. ' + result.processed + '/' + result.total + ' processed. Report emailed.', 'ok');
     } else {
-      setStatus('Checkpoint saved. Processed ' + (result && result.processed) + '/' + (result && result.total) + '. Resume trigger scheduled — email will arrive on completion.', 'ok');
+      setStatus('Checkpoint saved. Processed ' + (result && result.processed) + '/' + (result && result.total) +
+                '. Resume trigger scheduled — email will arrive on completion.', 'ok');
     }
   }
   function onCommitFailure(err) {
-    els.scanBtn.disabled = false;
+    els.loadBtn.disabled = false;
     els.commitBtn.disabled = false;
-    setStatus('Commit failed: ' + (err && err.message ? err.message : err), 'error');
+    setStatus('Commit failed: ' + errMsg(err), 'error');
+  }
+
+  function errMsg(err) {
+    if (!err) return 'unknown error';
+    if (err.message) return err.message;
+    return String(err);
   }
 })();
 </script>

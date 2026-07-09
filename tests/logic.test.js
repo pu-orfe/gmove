@@ -22,42 +22,107 @@ test('escapeHtml handles all sensitive characters', () => {
   assert.equal(L.escapeHtml(undefined), '');
 });
 
-test('buildExecutionPlan orders folders before files and records skip reasons', () => {
-  const activeUser = 'me@x.com';
-  const tree = {
-    id: 'root', name: 'Root', path: 'Root', isFolder: true, owner: 'me@x.com', mimeType: 'folder',
-    children: [
-      { id: 'f1', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com', children: [] },
-      { id: 'sub', name: 'Sub', path: 'Root/Sub', isFolder: true, owner: 'me@x.com', children: [
-        { id: 'f2', name: 'b.txt', path: 'Root/Sub/b.txt', isFolder: false, owner: 'someone@else.com', children: [] },
-        { id: 'f3', name: 'c.txt', path: 'Root/Sub/c.txt', isFolder: false, owner: 'me@x.com', children: [] }
-      ]}
-    ]
-  };
-  const selected = { root: true, f1: true, sub: true, f3: true }; // f2 not owned; also not selected
-  const { plan, preLogs } = L.buildExecutionPlan(tree, selected, activeUser);
+// Helper — builds a recursive-subtree node with the fields mergeSelection expects.
+const tree = (id, name, isFolder, owner, children = []) => ({
+  id, name, path: name, isFolder, owner, children
+});
 
-  const folderIds = plan.filter(p => p.isFolder).map(p => p.id);
-  const fileIds   = plan.filter(p => !p.isFolder).map(p => p.id);
-  assert.deepEqual(folderIds, ['root', 'sub']);
-  assert.deepEqual(fileIds.sort(), ['f1', 'f3']);
-  const skipReasons = preLogs.map(p => p.status);
-  assert.deepEqual(skipReasons, [L.STATUS.SKIPPED_NOT_OWNED]);
+test('mergeSelection: within a subtree emits folder, then files, then recurses into subfolders (DFS pre-order)', () => {
+  //  Root                    ← folder
+  //  ├── a.txt               ← file (should come immediately after Root)
+  //  ├── b.txt               ← file
+  //  └── Sub                 ← subfolder (visited AFTER Root's own files)
+  //      ├── c.txt           ← file
+  //      └── Deep            ← nested folder
+  //          └── d.txt
+  const t = tree('root', 'Root', true, 'me@x.com', [
+    { id: 'a', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com', children: [] },
+    { id: 'b', name: 'b.txt', path: 'Root/b.txt', isFolder: false, owner: 'me@x.com', children: [] },
+    { id: 'sub', name: 'Sub', path: 'Root/Sub', isFolder: true, owner: 'me@x.com', children: [
+      { id: 'c', name: 'c.txt', path: 'Root/Sub/c.txt', isFolder: false, owner: 'me@x.com', children: [] },
+      { id: 'deep', name: 'Deep', path: 'Root/Sub/Deep', isFolder: true, owner: 'me@x.com', children: [
+        { id: 'd', name: 'd.txt', path: 'Root/Sub/Deep/d.txt', isFolder: false, owner: 'me@x.com', children: [] }
+      ]}
+    ]}
+  ]);
+  const { plan, preLogs } = L.mergeSelection({
+    recursiveTrees: [t], explicitItems: [], activeUserEmail: 'me@x.com'
+  });
+  assert.deepEqual(plan.map(p => p.id), ['root', 'a', 'b', 'sub', 'c', 'deep', 'd']);
+  assert.deepEqual(preLogs, []);
+});
+
+test('mergeSelection: non-owned items become SKIPPED_NOT_OWNED and never enter the plan', () => {
+  const t = tree('root', 'Root', true, 'me@x.com', [
+    { id: 'mine',  name: 'mine.txt',  path: 'Root/mine.txt',  isFolder: false, owner: 'me@x.com',        children: [] },
+    { id: 'theirs', name: 'theirs.txt', path: 'Root/theirs.txt', isFolder: false, owner: 'someone@else.com', children: [] }
+  ]);
+  const { plan, preLogs } = L.mergeSelection({
+    recursiveTrees: [t], explicitItems: [], activeUserEmail: 'me@x.com'
+  });
+  assert.deepEqual(plan.map(p => p.id), ['root', 'mine']);
+  assert.equal(preLogs.length, 1);
+  assert.equal(preLogs[0].id, 'theirs');
+  assert.equal(preLogs[0].status, L.STATUS.SKIPPED_NOT_OWNED);
   assert.match(preLogs[0].message, /someone@else\.com/);
 });
 
-test('buildExecutionPlan flags deselected transferables as SKIPPED_DESELECTED', () => {
-  const tree = {
-    id: 'root', name: 'Root', path: 'Root', isFolder: true, owner: 'me@x.com', children: [
-      { id: 'f1', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com', children: [] }
-    ]
-  };
-  const { plan, preLogs } = L.buildExecutionPlan(tree, { root: true }, 'me@x.com');
-  assert.equal(plan.length, 1);            // root only
-  assert.equal(plan[0].id, 'root');
-  assert.equal(preLogs.length, 1);
-  assert.equal(preLogs[0].status, L.STATUS.SKIPPED_DESELECTED);
-  assert.equal(preLogs[0].id, 'f1');
+test('mergeSelection: non-owned intermediate folders are skipped but their owned descendants still transfer', () => {
+  // Root(me) → Bob's folder → my file inside.  Rare but real edge case in Drive.
+  const t = tree('root', 'Root', true, 'me@x.com', [
+    { id: 'bob', name: 'BobFolder', path: 'Root/BobFolder', isFolder: true, owner: 'bob@x.com', children: [
+      { id: 'insidebob', name: 'nested.txt', path: 'Root/BobFolder/nested.txt', isFolder: false, owner: 'me@x.com', children: [] }
+    ]}
+  ]);
+  const { plan, preLogs } = L.mergeSelection({
+    recursiveTrees: [t], explicitItems: [], activeUserEmail: 'me@x.com'
+  });
+  assert.deepEqual(plan.map(p => p.id), ['root', 'insidebob']);
+  assert.deepEqual(preLogs.map(p => p.id), ['bob']);
+});
+
+test('mergeSelection: explicit items appended after recursive walks; duplicates deduped by id', () => {
+  const t = tree('root', 'Root', true, 'me@x.com', [
+    { id: 'a', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com', children: [] }
+  ]);
+  const explicit = [
+    { id: 'a', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com' },  // dup of recursive walk
+    { id: 'z', name: 'orphan.txt', path: 'orphan.txt', isFolder: false, owner: 'me@x.com' }  // net new
+  ];
+  const { plan } = L.mergeSelection({
+    recursiveTrees: [t], explicitItems: explicit, activeUserEmail: 'me@x.com'
+  });
+  assert.deepEqual(plan.map(p => p.id), ['root', 'a', 'z']);
+});
+
+test('mergeSelection: same id in two recursive trees is deduped', () => {
+  const shared = { id: 'shared', name: 'shared.txt', path: 'A/shared.txt', isFolder: false, owner: 'me@x.com', children: [] };
+  const treeA = tree('A', 'A', true, 'me@x.com', [shared]);
+  const treeB = tree('B', 'B', true, 'me@x.com', [shared]);
+  const { plan } = L.mergeSelection({
+    recursiveTrees: [treeA, treeB], explicitItems: [], activeUserEmail: 'me@x.com'
+  });
+  // 'shared' appears once even though it was walked under both A and B.
+  assert.deepEqual(plan.filter(p => p.id === 'shared').length, 1);
+  assert.deepEqual(plan.map(p => p.id), ['A', 'shared', 'B']);
+});
+
+test('mergeSelection: empty inputs → empty plan and empty preLogs', () => {
+  const r = L.mergeSelection({ recursiveTrees: [], explicitItems: [], activeUserEmail: 'me@x.com' });
+  assert.deepEqual(r, { plan: [], preLogs: [] });
+});
+
+test('mergeSelection: explicit-only selection (no recursive) produces the items in order', () => {
+  const explicit = [
+    { id: 'x', name: 'x.txt', path: 'x.txt', isFolder: false, owner: 'me@x.com' },
+    { id: 'y', name: 'y.txt', path: 'y.txt', isFolder: false, owner: 'bob@x.com' },
+    { id: 'z', name: 'z.txt', path: 'z.txt', isFolder: false, owner: 'me@x.com' }
+  ];
+  const { plan, preLogs } = L.mergeSelection({
+    recursiveTrees: [], explicitItems: explicit, activeUserEmail: 'me@x.com'
+  });
+  assert.deepEqual(plan.map(p => p.id), ['x', 'z']);
+  assert.deepEqual(preLogs.map(p => p.id), ['y']);
 });
 
 test('shouldCheckpoint triggers only past the budget', () => {
@@ -73,11 +138,10 @@ test('summarizeLog counts each status bucket', () => {
     { status: L.STATUS.SUCCESS },
     { status: L.STATUS.FAILED },
     { status: L.STATUS.SKIPPED_NOT_OWNED },
-    { status: L.STATUS.SKIPPED_DESELECTED },
-    { status: L.STATUS.SKIPPED_DESELECTED }
+    { status: L.STATUS.SKIPPED_NOT_OWNED }
   ];
   const s = L.summarizeLog(log);
-  assert.deepEqual(s, { total: 6, success: 2, failed: 1, skippedNotOwned: 1, skippedDeselected: 2 });
+  assert.deepEqual(s, { total: 5, success: 2, failed: 1, skippedNotOwned: 2 });
 });
 
 test('formatReportHtml embeds metrics and failure rows, escapes hostile input', () => {

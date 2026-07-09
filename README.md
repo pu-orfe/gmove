@@ -249,10 +249,23 @@ to tear a specific one down.
 
 ## 3. Runtime behavior
 
-- **Scan** is fully read-only. It calls `DriveApp.getFolderById()` and walks
-  `getFolders()` / `getFiles()`. Shared-drive items whose `getOwner()`
-  throws are captured with `owner: ""` and marked non-transferable rather
-  than failing the walk.
+- **Browse (Phase 1)** is fully read-only. The client calls `browseFolder`
+  once per expansion, and each call lists only the immediate children of
+  that folder. There is no upfront full-tree scan. Shared-drive items whose
+  `getOwner()` throws are captured with `owner: ""` and marked
+  non-transferable rather than failing the walk. Each `browseFolder`
+  response is capped at 500 children; larger folders return `truncated:
+  true` and the UI surfaces a note.
+- **"Folder → everything inside" invariant.** Picking a folder in the tree
+  transfers every transferable file and subfolder inside it. Descendants
+  visibly lock (checkbox forced on and disabled) so you cannot deselect a
+  single file inside a selected folder — Drive requires per-item
+  ownership transfers, and a folder selection that skipped a contained file
+  would leave the file orphaned under the new owner's folder. The
+  invariant is enforced twice: client-side by the lock, and server-side by
+  the fact that `commitTransfer` has no "deselect" vocabulary at all — it
+  walks each `recursiveIds` subtree in full via DriveApp regardless of what
+  the client sends.
 - **Transfer order.** Inside a run, folders are transferred *before* their
   contained files. That way, if the run has to hand off to a resume trigger
   mid-batch, no orphaned file sits inside a still-old-owner folder for
@@ -270,7 +283,48 @@ to tear a specific one down.
   and a failure-manifest table, plus the full log as a CSV attachment.
   Sent to the initiator's email — read from `Session.getActiveUser()`.
 
-## 4. OAuth scopes
+## 4. Access allowlist
+
+Manifest access is `webapp.access: DOMAIN` — only `princeton.edu` accounts
+can hit the URL. On top of that, an in-code allowlist restricts the app
+further to a named list of users; anyone else in the domain sees a
+"not authorized" page instead of the app.
+
+The list lives at the top of `Code.gs`:
+
+```javascript
+var SETTINGS = {
+  ALLOWED_USERS: [
+    'bino@princeton.edu',
+    'orfe-files@princeton.edu',
+    'cdreyer@princeton.edu'
+  ],
+  SUPPORT_CONTACT: 'bino@princeton.edu'
+};
+```
+
+Two ways to change membership:
+
+1. **Code + deploy.** Edit `SETTINGS.ALLOWED_USERS`, run `./update.sh`. This
+   is the version-controlled option and the one an audit trail can point
+   to.
+2. **ScriptProperty override.** Set a ScriptProperty named
+   `gmove.allowed_users` to a comma-separated list of emails (in the
+   Apps Script editor: **Project Settings → Script Properties**). When
+   set, this overrides the in-code list and takes effect immediately —
+   no deploy needed. Deleting the property reverts to the in-code list.
+
+Matching is case-insensitive and whitespace-trimmed. Rejections are logged
+to Stackdriver (`clasp open-logs`) with the attempted email — you'll want
+this trail if someone reports being unable to get in.
+
+The allowlist is enforced in three places: `doGet` (page load), and both
+RPCs (`browseFolder`, `commitTransfer`). A user who was authorized at page
+load and removed mid-session cannot use the RPC surface. `resumeTransfer`
+— the time-driven trigger handler — is NOT gated, because triggers run
+with no active user.
+
+## 5. OAuth scopes
 
 Declared in `appsscript.json`:
 
@@ -285,7 +339,7 @@ The web-app is configured `executeAs: USER_ACCESSING` and
 only works when the active user owns the file) and (b) only members of
 your Workspace org can reach the URL.
 
-## 5. Theming
+## 6. Theming
 
 Paper Tiger tokens live at the top of `Styles.html`:
 
@@ -298,7 +352,7 @@ To re-theme, replace the `:root { … }` token block and the `.pt-*`
 component rules in `Styles.html`. The tree-view and status styles at the
 bottom of the file consume tokens only and do not need to change.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **"You do not have permission to call setOwner"** — the item is not
   actually owned by the caller. The UI should already have flagged it as
@@ -315,7 +369,7 @@ bottom of the file consume tokens only and do not need to change.
   Stackdriver logs — `clasp open-logs` — will show any `MailApp.sendEmail`
   failure.
 
-## 7. Notes
+## 8. Notes
 
 - `MEMORY.md`, `.claude/`, and `.env*` are git-ignored. Do not commit
   agent-authored planning artifacts alongside the code.

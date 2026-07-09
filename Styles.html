@@ -337,9 +337,10 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
   padding: 2px 10px;
   border-radius: var(--radius-pill);
 }
-.pt-pill--ok   { background: var(--color-brand-20);   color: var(--color-brand-90); }
-.pt-pill--skip { background: var(--color-neutral-10); color: var(--color-neutral-85); }
-.pt-pill--off  { background: var(--color-neutral-5);  color: var(--color-neutral-60); border: 1px solid var(--color-neutral-20); }
+.pt-pill--ok     { background: var(--color-brand-20);   color: var(--color-brand-90); }
+.pt-pill--skip   { background: var(--color-neutral-10); color: var(--color-neutral-85); }
+.pt-pill--off    { background: var(--color-neutral-5);  color: var(--color-neutral-60); border: 1px solid var(--color-neutral-20); }
+.pt-pill--locked { background: var(--color-neutral-90); color: var(--color-white); }
 
 .pt-counters {
   margin: var(--space-3) 0 var(--space-4);
@@ -395,6 +396,23 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
   text-decoration: line-through;
 }
 
+/* Locked = an ancestor folder has been selected recursively. The checkbox is
+   forced on and disabled — the user cannot uncheck children of a selected
+   parent. The visual mirrors that: full-strength text, but a faint chain-lock
+   glyph and a slightly tinted background. */
+.pt-node--locked {
+  background: var(--color-brand-10);
+}
+.pt-node--locked .pt-node__label {
+  color: var(--color-neutral-90);
+}
+.pt-node--locked::after {
+  content: "🔒";
+  font-size: 11px;
+  margin-left: auto;
+  opacity: 0.6;
+}
+
 .pt-badge {
   font-family: var(--font-label);
   font-size: var(--font-size-xs);
@@ -408,6 +426,75 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
 /* Focus ring on the interior card (WCAG helper) */
 .pt-outline-light:focus-within {
   border-color: var(--color-neutral-100);
+}
+
+/* Signed-in-as strip inside the dark page-title header. */
+.pt-signed-in {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-display);
+  color: var(--color-neutral-20);
+  font-size: var(--font-size-sm);
+}
+.pt-signed-in code {
+  background: var(--color-neutral-90);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-white);
+  font-family: var(--font-mono);
+}
+
+/* Explanatory hint block inside the browse card. */
+.pt-hint {
+  background: var(--color-brand-10);
+  border-left: 3px solid var(--color-brand-70);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-90);
+}
+.pt-hint strong { color: var(--color-brand-90); }
+
+.pt-toolbar {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-neutral-10);
+  border-bottom: 1px solid var(--color-neutral-10);
+}
+
+/* Unauthorized page — rendered by renderUnauthorized_() when a princeton.edu
+   user hits the URL but is not on the allowlist. Same tokens, no header
+   chrome, single-column layout. */
+.pt-unauthorized {
+  padding-top: var(--space-16);
+  padding-bottom: var(--space-16);
+  max-width: 42rem;
+}
+.pt-unauthorized h1 {
+  color: var(--color-neutral-100);
+  border-bottom: 4px solid var(--color-brand-70);
+  display: inline-block;
+  padding-bottom: var(--space-2);
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-bold);
+  font-size: 2rem;
+}
+.pt-unauthorized p {
+  font-family: var(--font-body);
+  font-size: var(--font-size-md);
+  margin-top: var(--space-4);
+}
+.pt-unauthorized code {
+  background: var(--color-neutral-5);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-neutral-10);
+}
+.pt-unauthorized a {
+  color: var(--color-brand-80);
+  border-bottom: 1px solid var(--color-brand-70);
+  text-decoration: none;
 }
 
 [hidden] { display: none !important; }

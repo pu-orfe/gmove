@@ -11,8 +11,7 @@ var TIME_BUDGET_MS = 4.5 * 60 * 1000;
 var STATUS = {
   SUCCESS: 'SUCCESS',
   FAILED: 'FAILED',
-  SKIPPED_NOT_OWNED: 'SKIPPED (NOT OWNED)',
-  SKIPPED_DESELECTED: 'SKIPPED (USER DESELECTED)'
+  SKIPPED_NOT_OWNED: 'SKIPPED (NOT OWNED)'
 };
 
 /** True iff the active user currently owns the item and can therefore call setOwner. */
@@ -22,22 +21,56 @@ function isTransferable(currentOwnerEmail, activeUserEmail) {
 }
 
 /**
- * Given a scan tree and the set of ids the UI kept checked, return the ordered
- * list of items to attempt to transfer (folders first so children inherit,
- * then files). Anything not owned or not selected is emitted as a pre-computed
- * skip log entry.
+ * mergeSelection — combine recursive-folder subtrees + individually-picked
+ * items into a single ordered plan.
+ *
+ * Emission order within each recursive subtree is DFS pre-order with files
+ * before subfolders:  folder → its files → recurse into subfolders. This
+ * keeps state coherent across checkpoints — if a resume trigger fires mid
+ * batch, the containing folder was already transferred before any of its
+ * files, so a partial run does not leave files stranded under an old-owner
+ * folder.
+ *
+ * Non-owned items become SKIPPED_NOT_OWNED preLogs and are NOT added to the
+ * plan. The plan is the exact list runBatch_ will attempt to setOwner on.
+ *
+ * There is deliberately no "deselect" input. That is the whole point of the
+ * new selection model: the server has no vocabulary for "skip a file inside
+ * a selected folder," which is what enforces the hard "folder → everything
+ * inside" invariant end-to-end.
+ *
+ * Duplicates (same id in multiple recursive trees, or in both recursive and
+ * explicit) are deduped by id — the first occurrence wins.
+ *
+ * @param {Object} opts
+ * @param {Array<Object>} opts.recursiveTrees  Fully-walked subtree nodes
+ *        {id,name,path,isFolder,owner,children:[…]}.
+ * @param {Array<Object>} opts.explicitItems   Flat items {id,name,path,isFolder,owner}.
+ * @param {string}        opts.activeUserEmail For the ownership check.
+ * @return {{plan: Array<Object>, preLogs: Array<Object>}}
  */
-function buildExecutionPlan(tree, selectedIdSet, activeUserEmail) {
-  var toTransfer = [];
-  var preLogs = [];
-  var folders = [];
-  var files = [];
+function mergeSelection(opts) {
+  opts = opts || {};
+  var recursiveTrees = opts.recursiveTrees || [];
+  var explicitItems  = opts.explicitItems  || [];
+  var activeUser     = opts.activeUserEmail;
 
-  function walk(node) {
-    if (!node) return;
-    var selected = selectedIdSet && selectedIdSet[node.id];
-    var transferable = isTransferable(node.owner, activeUserEmail);
-    if (!transferable) {
+  var plan = [];
+  var preLogs = [];
+  var seen = {};
+
+  function record(node) {
+    if (seen[node.id]) return;
+    seen[node.id] = true;
+    if (isTransferable(node.owner, activeUser)) {
+      plan.push({
+        id: node.id,
+        name: node.name,
+        path: node.path,
+        isFolder: !!node.isFolder,
+        owner: node.owner
+      });
+    } else {
       preLogs.push({
         id: node.id,
         name: node.name,
@@ -45,30 +78,26 @@ function buildExecutionPlan(tree, selectedIdSet, activeUserEmail) {
         status: STATUS.SKIPPED_NOT_OWNED,
         message: 'Owned by ' + (node.owner || 'unknown')
       });
-    } else if (!selected) {
-      preLogs.push({
-        id: node.id,
-        name: node.name,
-        path: node.path,
-        status: STATUS.SKIPPED_DESELECTED,
-        message: 'User deselected in UI'
-      });
-    } else {
-      var bucket = node.isFolder ? folders : files;
-      bucket.push({
-        id: node.id,
-        name: node.name,
-        path: node.path,
-        isFolder: !!node.isFolder
-      });
-    }
-    if (node.children && node.children.length) {
-      for (var i = 0; i < node.children.length; i++) walk(node.children[i]);
     }
   }
-  walk(tree);
-  toTransfer = folders.concat(files);
-  return { plan: toTransfer, preLogs: preLogs };
+
+  function walk(node) {
+    record(node);
+    if (!node.children || !node.children.length) return;
+    var files = [];
+    var subs  = [];
+    for (var i = 0; i < node.children.length; i++) {
+      var c = node.children[i];
+      if (c.isFolder) subs.push(c);
+      else files.push(c);
+    }
+    for (var f = 0; f < files.length; f++) record(files[f]);
+    for (var s = 0; s < subs.length;  s++) walk(subs[s]);
+  }
+
+  for (var r = 0; r < recursiveTrees.length; r++) walk(recursiveTrees[r]);
+  for (var e = 0; e < explicitItems.length;  e++) record(explicitItems[e]);
+  return { plan: plan, preLogs: preLogs };
 }
 
 /** Decide whether we should checkpoint and hand off to a resume trigger. */
@@ -79,13 +108,12 @@ function shouldCheckpoint(startedAtMs, nowMs, budgetMs) {
 
 /** Aggregate a log array into dashboard counters. */
 function summarizeLog(log) {
-  var summary = { total: log.length, success: 0, failed: 0, skippedNotOwned: 0, skippedDeselected: 0 };
+  var summary = { total: log.length, success: 0, failed: 0, skippedNotOwned: 0 };
   for (var i = 0; i < log.length; i++) {
     var s = log[i].status;
     if (s === STATUS.SUCCESS) summary.success++;
     else if (s === STATUS.FAILED) summary.failed++;
     else if (s === STATUS.SKIPPED_NOT_OWNED) summary.skippedNotOwned++;
-    else if (s === STATUS.SKIPPED_DESELECTED) summary.skippedDeselected++;
   }
   return summary;
 }
@@ -160,7 +188,6 @@ function formatReportHtml(context) {
             metricCell('Success',              summary.success,            C.brandBg,  C.brandDk),
             metricCell('Failed',               summary.failed,             '#fff',     C.brand),
             metricCell('Skipped (Not Owned)',  summary.skippedNotOwned,    C.neutral5, C.n60),
-            metricCell('Skipped (Deselected)', summary.skippedDeselected,  C.neutral5, C.n60),
           '</tr>',
         '</table>',
         '<h3 style="margin:16px 0 8px 0;font-family:' + fontDisplay + ';font-weight:700;',
@@ -237,7 +264,7 @@ if (typeof module !== 'undefined' && module.exports) {
     TIME_BUDGET_MS: TIME_BUDGET_MS,
     STATUS: STATUS,
     isTransferable: isTransferable,
-    buildExecutionPlan: buildExecutionPlan,
+    mergeSelection: mergeSelection,
     shouldCheckpoint: shouldCheckpoint,
     summarizeLog: summarizeLog,
     formatReportHtml: formatReportHtml,

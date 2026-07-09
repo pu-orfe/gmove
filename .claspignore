@@ -1,0 +1,44 @@
+# Files that must NOT be pushed to the Apps Script project.
+# clasp uploads everything by default and renames .js → .gs — that would
+# turn Node-only files (require(), module.exports, node:test) into
+# ParseError-producing .gs files.
+
+# Node test suite (uses require() and node --test)
+tests/**
+tests/**/*
+
+# Node tooling
+node_modules/**
+package.json
+package-lock.json
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+
+# Deploy scripts and CI
+deploy.sh
+deploy-gws.sh
+update.sh
+teardown.sh
+.github/**
+
+# Docs and repo metadata
+README.md
+*.md
+LICENSE
+
+# Local state / dotfiles
+.git/**
+.gitignore
+.clasp.json
+.gws.json
+.env
+.env.*
+.DS_Store
+
+# Agent-authored artifacts (per project policy)
+CLAUDE.md
+.claude/**
+memory/**

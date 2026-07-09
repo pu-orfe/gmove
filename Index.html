@@ -10,8 +10,12 @@
     <header class="pt-page-title">
       <div class="pt-container">
         <h1>Drive Ownership Transfer</h1>
-        <p>Dry-run inventory, then a scoped production run with checkpointing. Themed to
-          <a href="https://github.com/pu-orfe/paper-tiger" target="_blank" rel="noopener">Paper Tiger</a>.
+        <p>
+          Browse the drive, select folders and files, and transfer ownership in bulk.
+          Themed to <a href="https://github.com/pu-orfe/paper-tiger" target="_blank" rel="noopener">Paper Tiger</a>.
+        </p>
+        <p class="pt-signed-in">
+          Signed in as <code><?!= activeUserEmail ?></code>
         </p>
       </div>
     </header>
@@ -25,7 +29,7 @@
           <label class="pt-field">
             <span class="pt-field__label">Target folder ID</span>
             <input id="targetFolderId" class="pt-input" type="text" placeholder="1AbC-…" autocomplete="off">
-            <span class="pt-field__hint">The Drive folder to walk. Copy the ID from the URL after <code>/folders/</code>.</span>
+            <span class="pt-field__hint">The root folder to browse. Copy the ID from the URL after <code>/folders/</code>.</span>
           </label>
           <label class="pt-field">
             <span class="pt-field__label">New owner email</span>
@@ -34,7 +38,7 @@
           </label>
         </div>
         <div class="pt-row pt-row--actions pt-cluster">
-          <button class="pt-btn pt-btn--primary" id="scanBtn" type="button">Scan Directory</button>
+          <button class="pt-btn pt-btn--primary" id="loadBtn" type="button">Load folder</button>
           <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
         </div>
         <p class="pt-status" id="status" role="status" aria-live="polite"></p>
@@ -42,15 +46,31 @@
 
       <section class="pt-surface pt-outline-light" id="tree-card" hidden style="margin-top:var(--space-8);">
         <div class="pt-block-heading">
-          <h2>2 · Scope</h2>
+          <h2>2 · Browse &amp; select</h2>
           <div class="pt-cluster">
-            <span class="pt-pill pt-pill--ok">Will change</span>
+            <span class="pt-pill pt-pill--ok">Will transfer</span>
+            <span class="pt-pill pt-pill--locked">Locked (ancestor selected)</span>
             <span class="pt-pill pt-pill--skip">Not owned — will skip</span>
-            <span class="pt-pill pt-pill--off">Deselected</span>
           </div>
         </div>
+
+        <p class="pt-hint">
+          <strong>Picking a folder transfers everything inside it.</strong>
+          Once a folder is checked, its children lock — you cannot deselect a single file
+          or subfolder inside a selected folder. Drive requires per-item ownership
+          transfers; this UI enforces "all or nothing" for a folder to prevent orphaned
+          contents.
+        </p>
+
+        <div class="pt-toolbar pt-cluster">
+          <button class="pt-btn pt-btn--outline" id="expandAllBtn" type="button">Expand all in view</button>
+          <button class="pt-btn pt-btn--outline" id="collapseAllBtn" type="button">Collapse all</button>
+          <button class="pt-btn pt-btn--outline" id="selectAllBtn" type="button">Select all in view</button>
+          <button class="pt-btn pt-btn--outline" id="clearAllBtn" type="button">Clear selection</button>
+        </div>
+
         <div id="counters" class="pt-counters"></div>
-        <div id="tree" class="pt-tree" role="tree" aria-label="Scan results"></div>
+        <div id="tree" class="pt-tree" role="tree" aria-label="Drive tree"></div>
       </section>
     </main>
 
