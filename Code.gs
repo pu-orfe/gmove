@@ -469,50 +469,14 @@ function runBatch_() {
   return { done: true, processed: state.cursor, total: state.plan.length };
 }
 
-/**
- * Transfer ownership of one Drive item to newOwnerEmail — SILENTLY.
- *
- * Uses the Drive REST API v3 directly (not DriveApp.setOwner) because the
- * DriveApp method fires the "You have been added as an owner" notification
- * per item with no way to opt out. Drive v3's Permissions.create endpoint
- * accepts sendNotificationEmail=false, which is what we want here — a
- * batch transfer of hundreds of items should not carpet-bomb the new
- * owner's inbox.
- *
- * The call uses OAuth tokens already granted to the running user (the
- * drive scope is auto-inferred by Apps Script from DriveApp usage
- * elsewhere in this script), so there is no manifest change and no
- * re-authorization required.
- */
 function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
   try {
-    var url = 'https://www.googleapis.com/drive/v3/files/' +
-              encodeURIComponent(item.id) +
-              '/permissions?transferOwnership=true&sendNotificationEmail=false';
-    var response = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-      payload: JSON.stringify({
-        role: 'owner',
-        type: 'user',
-        emailAddress: newOwnerEmail
-      }),
-      muteHttpExceptions: true
-    });
-    var code = response.getResponseCode();
-    if (code >= 200 && code < 300) {
-      return {
-        timestamp: ts, id: item.id, name: item.name, path: item.path,
-        status: STATUS.SUCCESS,
-        message: 'Transferred to ' + newOwnerEmail + ' (no notification email sent).'
-      };
-    }
+    var handle = item.isFolder ? DriveApp.getFolderById(item.id) : DriveApp.getFileById(item.id);
+    handle.setOwner(newOwnerEmail);
     return {
       timestamp: ts, id: item.id, name: item.name, path: item.path,
-      status: STATUS.FAILED,
-      message: extractDriveError_(response.getContentText()) || ('Drive API HTTP ' + code)
+      status: STATUS.SUCCESS, message: 'Ownership transferred to ' + newOwnerEmail
     };
   } catch (e) {
     return {
@@ -520,15 +484,6 @@ function attemptTransfer_(item, newOwnerEmail) {
       status: STATUS.FAILED, message: e && e.message ? e.message : String(e)
     };
   }
-}
-
-function extractDriveError_(body) {
-  if (!body) return '';
-  try {
-    var j = JSON.parse(body);
-    if (j && j.error && j.error.message) return j.error.message;
-  } catch (e) { /* not JSON — fall through */ }
-  return '';
 }
 
 // ---------- State via PropertiesService ------------------------------------
