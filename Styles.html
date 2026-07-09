@@ -374,13 +374,37 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
 .pt-node:hover { background: var(--color-brand-10); }
 .pt-node__toggle {
   width: 16px;
+  height: 16px;
   text-align: center;
   cursor: pointer;
   user-select: none;
   color: var(--color-neutral-60);
   font-family: var(--font-mono);
+  line-height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+  flex: 0 0 auto;
 }
 .pt-node__toggle--leaf { visibility: hidden; }
+
+/* Loading state — replaces the ▸/▾ glyph with a spinning ring while the
+   folder's browseFolder RPC is in flight. Text content is emptied by the
+   client so the ring is the only visible thing. */
+.pt-node__toggle--loading {
+  cursor: wait;
+  color: transparent;
+  border: 2px solid var(--color-neutral-20);
+  border-top-color: var(--color-brand-70);
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation: pt-spin 0.7s linear infinite;
+}
+@keyframes pt-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pt-node__toggle--loading { animation: none; border-top-color: var(--color-brand-70); }
+}
 .pt-node__icon { width: 16px; text-align: center; }
 .pt-node__label { flex: 1 1 auto; }
 .pt-node__label--folder { font-weight: var(--font-weight-semibold); }

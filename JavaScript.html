@@ -255,14 +255,18 @@
   function onToggleFolder(id) {
     var n = state.nodes[id];
     if (!n || !n.isFolder) return;
+    if (n.loading) return; // ignore rapid re-clicks while a fetch is in flight
     if (!n.childrenLoaded) {
+      setToggleLoading(id, true);
       setStatus('Loading ' + n.name + '…');
       google.script.run
         .withSuccessHandler(function (result) {
+          setToggleLoading(id, false);
           onBrowseSuccess(result, /*isRoot*/false);
           setStatus('', 'ok');
         })
         .withFailureHandler(function (err) {
+          setToggleLoading(id, false);
           setStatus('Cannot list ' + n.name + ': ' + errMsg(err), 'error');
         })
         .browseFolder(id);
@@ -276,6 +280,25 @@
     n.expanded = ul.style.display === 'none';
     ul.style.display = n.expanded ? '' : 'none';
     updateToggleGlyph(li);
+  }
+
+  function setToggleLoading(id, isLoading) {
+    var n = state.nodes[id];
+    if (!n) return;
+    n.loading = !!isLoading;
+    var li = liById(id);
+    if (!li) return;
+    var toggle = li.querySelector(':scope > .pt-node > .pt-node__toggle');
+    if (!toggle) return;
+    if (isLoading) {
+      toggle.classList.add('pt-node__toggle--loading');
+      toggle.textContent = '';
+      toggle.setAttribute('aria-label', 'Loading contents');
+    } else {
+      toggle.classList.remove('pt-node__toggle--loading');
+      toggle.removeAttribute('aria-label');
+      updateToggleGlyph(li);
+    }
   }
 
   function onExpandAllInView() {
