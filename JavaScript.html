@@ -71,6 +71,15 @@
   // background throttling never stares at stale data.
   var queuePollTimer = null;
   var lastQueueEmail = null;
+  // Client-side auto-nudge state. If the queue's oldest running job hasn't
+  // reported progress in AUTO_NUDGE_STALE_MS, fire nudgeResume() from the
+  // browser. This works around Apps Script's time-based-trigger scheduler
+  // being unreliable — even at after(60000) we've seen triggers dropped
+  // silently. As long as any allowlisted user has this tab open, running
+  // jobs get an immediate resume kick without waiting for a trigger.
+  var lastAutoNudgeAt = 0;
+  var AUTO_NUDGE_STALE_MS   = 90 * 1000;   // consider a job stalled after 90s of no update
+  var AUTO_NUDGE_COOLDOWN   = 60 * 1000;   // don't fire another nudge within 60s of the last
 
   function scheduleQueuePoll() {
     if (queuePollTimer) return;
@@ -133,12 +142,53 @@
     table.appendChild(tbody);
     els.queueBody.appendChild(table);
     scheduleQueuePoll();
+    maybeAutoNudge(jobs);
+  }
+
+  function maybeAutoNudge(jobs) {
+    if (!jobs || jobs.length === 0) return;
+    var now = Date.now();
+    if (now - lastAutoNudgeAt < AUTO_NUDGE_COOLDOWN) return;
+
+    var stalled = null;
+    for (var i = 0; i < jobs.length; i++) {
+      var j = jobs[i];
+      if (j.status !== 'running') continue;
+      var lastAt = j.checkpointedAt || j.startedAt;
+      if (!lastAt) continue;
+      var age = now - new Date(lastAt).getTime();
+      if (age > AUTO_NUDGE_STALE_MS) { stalled = j; break; }
+    }
+    if (!stalled) return;
+
+    console.warn('gmove: auto-nudging stalled job ' + stalled.jobId +
+                 ' (' + stalled.processed + '/' + stalled.total +
+                 ', last activity ' + (stalled.checkpointedAt || stalled.startedAt) + ')');
+    lastAutoNudgeAt = now;
+    google.script.run
+      .withSuccessHandler(function (r) {
+        console.info('gmove: auto-nudge result:', JSON.stringify(r));
+        fetchQueue(false);
+      })
+      .withFailureHandler(function (e) {
+        console.warn('gmove: auto-nudge failed:', e && e.message ? e.message : e);
+      })
+      .nudgeResume();
   }
 
   function renderQueueRow(job, me) {
     var tr = document.createElement('tr');
     if (job.initiator && me && String(job.initiator).toLowerCase() === String(me).toLowerCase()) {
       tr.className = 'pt-queue-row--mine';
+    }
+    // Mark a running job as stalled when its last-activity timestamp is
+    // older than the auto-nudge threshold — same criterion maybeAutoNudge
+    // uses, so the visual state and the client action stay in sync.
+    if (job.status === 'running') {
+      var lastAt = job.checkpointedAt || job.startedAt;
+      if (lastAt && (Date.now() - new Date(lastAt).getTime()) > AUTO_NUDGE_STALE_MS) {
+        tr.classList.add('pt-queue-row--stalled');
+      }
     }
     tr.appendChild(cell(job.initiator || '—'));
     tr.appendChild(cell(job.newOwnerEmail || '—'));
