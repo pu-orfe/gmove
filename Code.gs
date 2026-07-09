@@ -1198,6 +1198,11 @@ function sendNewOwnerReport_(state) {
   var subject = 'You now own ' + successes.length + ' item' +
     (successes.length === 1 ? '' : 's') + ' — transferred by ' +
     (state.initiatorEmail || 'a colleague');
+  var quotaRemaining = -1;
+  try { quotaRemaining = MailApp.getRemainingDailyQuota(); } catch (_) {}
+  console.info('gmove: sendNewOwnerReport_ attempting mail to=' + newOwner +
+               ' subject="' + subject + '" itemCount=' + successes.length +
+               ' mailQuotaRemaining=' + quotaRemaining);
   try {
     MailApp.sendEmail({
       to: newOwner,
@@ -1205,10 +1210,14 @@ function sendNewOwnerReport_(state) {
       htmlBody: html,
       attachments: [attachment]
     });
+    var afterQuota = -1;
+    try { afterQuota = MailApp.getRemainingDailyQuota(); } catch (_) {}
+    console.info('gmove: sendNewOwnerReport_ MailApp.sendEmail returned OK to=' + newOwner +
+                 ' mailQuotaAfter=' + afterQuota);
     return { sent: true };
   } catch (e) {
     var msg = e && e.message ? e.message : String(e);
-    console.error('gmove: sendNewOwnerReport_ failed for ' + newOwner + ': ' + msg);
+    console.error('gmove: sendNewOwnerReport_ MailApp.sendEmail failed to=' + newOwner + ': ' + msg);
     return { sent: false, error: msg };
   }
 }
@@ -1230,6 +1239,11 @@ function sendReport_(state) {
   var csv = logToCsv(state.log);
   var subject = 'Drive Ownership Transfer — ' + summary.success + ' succeeded, ' + summary.failed + ' failed';
   var attachment = Utilities.newBlob(csv, 'text/csv', 'drive-transfer-log-' + Date.now() + '.csv');
+  var quotaRemaining = -1;
+  try { quotaRemaining = MailApp.getRemainingDailyQuota(); } catch (_) { /* best-effort */ }
+  console.info('gmove: sendReport_ attempting mail to=' + state.initiatorEmail +
+               ' subject="' + subject + '" successCount=' + summary.success +
+               ' failedCount=' + summary.failed + ' mailQuotaRemaining=' + quotaRemaining);
   try {
     MailApp.sendEmail({
       to: state.initiatorEmail,
@@ -1237,10 +1251,14 @@ function sendReport_(state) {
       htmlBody: html,
       attachments: [attachment]
     });
+    var afterQuota = -1;
+    try { afterQuota = MailApp.getRemainingDailyQuota(); } catch (_) {}
+    console.info('gmove: sendReport_ MailApp.sendEmail returned OK to=' + state.initiatorEmail +
+                 ' mailQuotaAfter=' + afterQuota);
     return { sent: true };
   } catch (e) {
     var msg = e && e.message ? e.message : String(e);
-    console.error('MailApp.sendEmail failed: ' + msg);
+    console.error('gmove: sendReport_ MailApp.sendEmail failed to=' + state.initiatorEmail + ': ' + msg);
     return { sent: false, error: msg };
   }
 }

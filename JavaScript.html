@@ -810,6 +810,14 @@
     els.loadBtn.disabled = true;
     els.commitBtn.disabled = true;
     setStatus('Committing… large jobs will resume via a time-driven trigger; you will receive an email report.');
+    // Start polling the queue right away so the "0 · Job queue" card reflects
+    // real progress during the sync commit call (which can run several
+    // minutes for a large selection). Without this, the client sits on an
+    // empty queue until commitTransfer returns.
+    setTimeout(function () {
+      fetchQueue(false);
+      scheduleQueuePoll();
+    }, 2000);
     google.script.run
       .withSuccessHandler(onCommitSuccess)
       .withFailureHandler(onCommitFailure)
