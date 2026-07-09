@@ -126,7 +126,9 @@
     table.appendChild(thead);
     var tbody = document.createElement('tbody');
     for (var i = 0; i < jobs.length; i++) {
-      tbody.appendChild(renderQueueRow(jobs[i], me));
+      var pair = renderQueueRow(jobs[i], me);
+      tbody.appendChild(pair.mainRow);
+      if (pair.errorRow) tbody.appendChild(pair.errorRow);
     }
     table.appendChild(tbody);
     els.queueBody.appendChild(table);
@@ -148,7 +150,21 @@
     tr.appendChild(cell(shortTime(job.startedAt)));
     tr.appendChild(statusPillCell(job.status));
     tr.appendChild(cancelCell(job));
-    return tr;
+
+    // If runBatch_ threw for this job on a previous invocation, render the
+    // captured message under the main row so it's plainly visible.
+    var errorRow = null;
+    if (job.lastError) {
+      errorRow = document.createElement('tr');
+      errorRow.className = 'pt-queue-row--error';
+      var td = document.createElement('td');
+      td.setAttribute('colspan', '7');
+      var errAt = job.lastErrorAt ? ' at ' + shortTime(job.lastErrorAt) : '';
+      td.innerHTML = '<strong>Last error' + errAt + ':</strong> ';
+      td.appendChild(document.createTextNode(job.lastError));
+      errorRow.appendChild(td);
+    }
+    return { mainRow: tr, errorRow: errorRow };
   }
 
   function cancelCell(job) {

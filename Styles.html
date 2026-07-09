@@ -621,6 +621,19 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
   border-left: 3px solid var(--color-brand-70);
   background: var(--color-brand-10);
 }
+.pt-queue-table tr.pt-queue-row--error td {
+  background: #fff3e0;
+  color: #c1560e;
+  border-top: none;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  border-bottom: 2px solid var(--color-brand-70);
+}
+.pt-queue-table tr.pt-queue-row--error td strong {
+  font-family: var(--font-display);
+  color: var(--color-brand-90);
+}
 .pt-queue-table td.pt-queue__folder {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);

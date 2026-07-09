@@ -416,7 +416,7 @@ function commitTransfer(payload) {
     status:          'queued'
   };
 
-  var result = withScriptLock_(function () {
+  var registered = withScriptLock_(function () {
     migrateLegacyStateIfPresent_();
     var registry = pruneJobsRegistry(loadJobsRegistry_());
     var runningExists = false;
@@ -427,10 +427,6 @@ function commitTransfer(payload) {
     registry.push(meta);
     saveJobsRegistry_(registry);
     saveJobState_(jobId, state);
-    // Kick off runBatch_ immediately when we are first in line, otherwise
-    // the existing runner will pick this job up when it finishes its
-    // current one via its own scheduleResume_ call at the end of a batch.
-    if (!runningExists) ensureResumeTrigger_(0);
     var queuedAhead = 0;
     for (var j = 0; j < registry.length; j++) {
       if (registry[j].jobId === jobId) break;
@@ -438,7 +434,37 @@ function commitTransfer(payload) {
     }
     return { jobId: jobId, queued: runningExists, ahead: queuedAhead };
   });
-  return result;
+
+  // If we're first in line, run the first batch SYNCHRONOUSLY. Do not depend
+  // on Apps Script's time-driven trigger for kickoff — `after(1000)` triggers
+  // are sometimes dropped by the scheduler, which strands the job at 0/N.
+  // The lock is already released; runBatch_ acquires its own. Client waits
+  // up to the Apps Script per-call limit (~6 min) but sees real progress in
+  // the queue view via the mid-batch progress writes.
+  if (!registered.queued) {
+    try {
+      runBatch_();
+    } catch (e) {
+      var msg = e && e.message ? e.message : String(e);
+      var stack = e && e.stack ? e.stack : '(no stack)';
+      console.error('gmove: initial runBatch_ threw for ' + jobId + ': ' + msg + '\n' + stack);
+      // Persist the error to the job's meta so the queue UI can surface it,
+      // then schedule a retry trigger so the job isn't permanently stranded.
+      try {
+        withScriptLock_(function () {
+          updateJobMeta_(jobId, {
+            lastError: msg.slice(0, 500),
+            lastErrorAt: new Date().toISOString()
+          });
+          ensureResumeTrigger_(60 * 1000);
+        });
+      } catch (e2) {
+        console.error('gmove: could not persist lastError / schedule retry: ' +
+                      (e2 && e2.message ? e2.message : e2));
+      }
+    }
+  }
+  return registered;
 }
 
 /**
@@ -738,6 +764,29 @@ function debugClearAllJobs() {
  * one huge job's plan from starving another.
  */
 function runBatch_() {
+  var currentJobId = null;
+  try {
+    return runBatch_impl_(function (id) { currentJobId = id; });
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    var stack = e && e.stack ? e.stack : '(no stack)';
+    console.error('gmove runBatch_ error' +
+      (currentJobId ? ' [job ' + currentJobId + ']' : '') + ': ' + msg + '\n' + stack);
+    if (currentJobId) {
+      try {
+        withScriptLock_(function () {
+          updateJobMeta_(currentJobId, {
+            lastError: msg.slice(0, 500),
+            lastErrorAt: new Date().toISOString()
+          });
+        });
+      } catch (e2) { /* best-effort */ }
+    }
+    throw e;
+  }
+}
+
+function runBatch_impl_(setCurrentJobId) {
   // Pick + load under the lock so nothing else can grab or delete our job.
   var loaded = withScriptLock_(function () {
     migrateLegacyStateIfPresent_();
@@ -767,8 +816,16 @@ function runBatch_() {
 
   var job = loaded.job;
   var state = loaded.state;
+  setCurrentJobId(job.jobId);
   var startedAtMs = Date.now();
   var newOwner = state.newOwnerEmail;
+  // Clear any stale lastError on this job now that we're actually running.
+  // If we throw before making progress, the outer catch rewrites it fresh.
+  if (job.lastError) {
+    withScriptLock_(function () {
+      updateJobMeta_(job.jobId, { lastError: null, lastErrorAt: null });
+    });
+  }
 
   // If this is a report_pending job, all items were already processed; go
   // straight to finalize (which will retry mail).
