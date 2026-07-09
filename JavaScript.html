@@ -6,6 +6,7 @@
     targetFolderId:  document.getElementById('targetFolderId'),
     newOwnerEmail:   document.getElementById('newOwnerEmail'),
     loadBtn:         document.getElementById('loadBtn'),
+    loadMyDriveBtn:  document.getElementById('loadMyDriveBtn'),
     commitBtn:       document.getElementById('commitBtn'),
     status:          document.getElementById('status'),
     treeCard:        document.getElementById('tree-card'),
@@ -43,6 +44,7 @@
   };
 
   els.loadBtn.addEventListener('click', onLoad);
+  els.loadMyDriveBtn.addEventListener('click', onLoadMyDrive);
   els.commitBtn.addEventListener('click', onCommit);
   els.expandAllBtn.addEventListener('click', onExpandAllInView);
   els.collapseAllBtn.addEventListener('click', onCollapseAll);
@@ -59,17 +61,42 @@
   function onLoad() {
     var id = (els.targetFolderId.value || '').trim();
     if (!id) { setStatus('Enter a target folder ID first.', 'error'); return; }
+    loadRoot(id);
+  }
+
+  function onLoadMyDrive() {
+    els.loadMyDriveBtn.disabled = true;
+    setStatus('Fetching My Drive root…');
+    google.script.run
+      .withSuccessHandler(function (root) {
+        // Populate the input so the user learns what the root ID looks like
+        // and can copy it if they want to bookmark or share it.
+        els.targetFolderId.value = root.id;
+        els.loadMyDriveBtn.disabled = false;
+        loadRoot(root.id);
+      })
+      .withFailureHandler(function (err) {
+        els.loadMyDriveBtn.disabled = false;
+        setStatus('Could not open My Drive: ' + errMsg(err), 'error');
+      })
+      .getMyDriveRoot();
+  }
+
+  function loadRoot(id) {
     els.loadBtn.disabled = true;
+    els.loadMyDriveBtn.disabled = true;
     setStatus('Loading folder…');
     google.script.run
       .withSuccessHandler(function (result) {
         onBrowseSuccess(result, /*isRoot*/true);
         els.loadBtn.disabled = false;
+        els.loadMyDriveBtn.disabled = false;
         els.commitBtn.disabled = false;
         setStatus('Loaded ' + result.node.name + '. Click ▸ to expand a folder. Active user: ' + result.activeUserEmail, 'ok');
       })
       .withFailureHandler(function (err) {
         els.loadBtn.disabled = false;
+        els.loadMyDriveBtn.disabled = false;
         setStatus('Load failed: ' + errMsg(err), 'error');
       })
       .browseFolder(id);

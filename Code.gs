@@ -121,6 +121,20 @@ function renderUnauthorized_(email) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
+// ---------- Convenience: My Drive root -----------------------------------
+
+/**
+ * Return the caller's My Drive root as {id, name}. Used by the "Browse My
+ * Drive" client shortcut for users who don't know how to copy a folder ID
+ * out of a Drive URL. Note: shared drives are NOT reachable from My Drive —
+ * a shared-drive folder ID still has to be pasted in manually.
+ */
+function getMyDriveRoot() {
+  assertAuthorized_();
+  var root = DriveApp.getRootFolder();
+  return { id: root.getId(), name: root.getName() };
+}
+
 // ---------- Phase 1: browse (lazy, one level at a time) ------------------
 
 /**

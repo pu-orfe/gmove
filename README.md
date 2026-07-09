@@ -256,6 +256,12 @@ to tear a specific one down.
   non-transferable rather than failing the walk. Each `browseFolder`
   response is capped at 500 children; larger folders return `truncated:
   true` and the UI surfaces a note.
+- **My Drive shortcut.** For users who do not know how to fetch a folder
+  ID out of a Drive URL, a **Browse My Drive** button calls
+  `getMyDriveRoot()` (which is just `DriveApp.getRootFolder()` on the
+  server), populates the target-folder-ID field with the returned id, and
+  loads the tree from there. Shared drives are NOT reachable this way —
+  a shared-drive folder ID still has to be pasted in manually.
 - **"Folder → everything inside" invariant.** Picking a folder in the tree
   transfers every transferable file and subfolder inside it. Descendants
   visibly lock (checkbox forced on and disabled) so you cannot deselect a

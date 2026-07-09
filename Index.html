@@ -29,7 +29,11 @@
           <label class="pt-field">
             <span class="pt-field__label">Target folder ID</span>
             <input id="targetFolderId" class="pt-input" type="text" placeholder="1AbC-…" autocomplete="off">
-            <span class="pt-field__hint">The root folder to browse. Copy the ID from the URL after <code>/folders/</code>.</span>
+            <span class="pt-field__hint">
+              Paste the ID from a Drive URL after <code>/folders/</code>, or click
+              <strong>Browse My Drive</strong> to start from your root. Shared drives
+              still need a folder ID pasted in.
+            </span>
           </label>
           <label class="pt-field">
             <span class="pt-field__label">New owner email</span>
@@ -39,6 +43,7 @@
         </div>
         <div class="pt-row pt-row--actions pt-cluster">
           <button class="pt-btn pt-btn--primary" id="loadBtn" type="button">Load folder</button>
+          <button class="pt-btn pt-btn--outline" id="loadMyDriveBtn" type="button">Browse My Drive</button>
           <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
         </div>
         <p class="pt-status" id="status" role="status" aria-live="polite"></p>
