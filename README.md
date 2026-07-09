@@ -32,8 +32,8 @@ gmove/
 │   └── package.json
 ├── Dockerfile              Alpine + Node 20 for containerized test runs
 ├── docker-compose.yml
-├── deploy-gws.sh           macOS zsh: googleworkspace-cli (gws) create/push/version/deploy
-├── deploy.sh               macOS zsh: clasp login/create/push/deploy (alternative)
+├── deploy.sh               macOS zsh: clasp login/create/push/deploy  ← default
+├── deploy-gws.sh           macOS zsh: googleworkspace-cli (gws) — alternative, see §2b
 ├── update.sh               tests → push → deploy
 └── teardown.sh             list / undeploy web-app versions
 ```
@@ -46,15 +46,17 @@ gmove/
   as `docker-compose` per project convention.
 - A Google Workspace account. Ownership transfer only works between accounts
   in the same organization.
-- **CLI to deploy** — pick one; both work at the individual-user level, no
-  Workspace-admin rights required:
-    - `googleworkspace-cli` (recommended): `brew install googleworkspace-cli`
-      then `gws auth login`. Ships as `gws`. All deploy steps in section 2a
-      are user-scoped OAuth calls to the Apps Script API — no admin console
-      access needed.
-    - `clasp` (Google's official Apps Script CLI): `npm install -g @google/clasp`
-      then `clasp login`. See section 2b.
-- `jq` on PATH (for the gws script's JSON parsing): `brew install jq`.
+- **CLI to deploy** — `clasp` is the default. It uses Google's shared OAuth
+  client, which already includes the Apps Script scopes, so no GCP
+  project setup is required.
+    - `clasp` (default): `npm install -g @google/clasp` then `clasp login`.
+      See §2a.
+    - `googleworkspace-cli` (advanced, only if you're already running a
+      dedicated GCP project with the Apps Script API + scopes configured):
+      `brew install googleworkspace-cli jq` then `gws auth login`. See §2b
+      — there are real prerequisites; **do not use this path if your `gws`
+      auth is currently pointed at a project that doesn't cover Apps
+      Script**.
 
 ## 1. Testing
 
@@ -99,80 +101,111 @@ done.
 
 ## 2. Deploy to Apps Script (production)
 
-### 2a. Deploy with `googleworkspace-cli` (recommended, no admin needed)
+### 2a. Deploy with `clasp` (default and recommended)
 
-Every step below is a user-scoped OAuth call — no Workspace-admin console
-access is required. This is the shortest path from a fresh repo to a live
-web-app URL.
-
-```sh
-# One-time: install and log in
-brew install googleworkspace-cli jq
-gws auth login              # opens browser; log in as the user who will run transfers
-gws auth status             # sanity check
-
-# Enable the Apps Script API for your user (required exactly once per Google
-# account, done through the personal user-settings page, not the admin console):
-open "https://script.google.com/home/usersettings"
-# Toggle "Google Apps Script API" → ON.
-
-# One-shot: create the project, push files, cut a version, deploy the web app
-./deploy-gws.sh
-```
-
-What `deploy-gws.sh` does under the hood:
-
-1. `gws script projects create --json '{"title":"Drive Ownership Transfer"}'`
-   — creates a standalone script project, writes the resulting `scriptId`
-   to `.gws.json` (git-ignored). If `.gws.json` already exists the step is
-   skipped and the existing project is reused.
-2. `gws script +push --script "$SCRIPT_ID" --dir .` — uploads every
-   `*.gs`, `*.html`, and `appsscript.json` in this directory.
-3. `gws script projects versions create --params '{"scriptId":"…"}'`
-   — cuts an immutable version off the current code.
-4. `gws script projects deployments create --params '{"scriptId":"…"}' \
-   --json '{"versionNumber":N,"description":"…","manifestFileName":"appsscript"}'`
-   — publishes the version as a web-app. The response includes the
-   `webApp.url` you hand to end users.
-
-Rerun `./deploy-gws.sh` any time — steps 2-4 re-run and produce a fresh
-deployment against the same script id.
-
-**Consent gate.** The very first invocation of the web-app URL triggers
-Google's OAuth consent screen because the manifest requests Drive/Mail
-scopes. This is *user* consent, not admin consent — each caller sees the
-dialog once. Add screenshots to your rollout docs if you're onboarding a
-team.
-
-**Advanced Drive Service.** The manifest already enables Drive v3 as an
-Advanced Service. `gws +push` uploads the manifest verbatim, so this is
-already handled — you do NOT need to visit the Apps Script editor unless
-you want to.
-
-To tear down a deployment:
-
-```sh
-SCRIPT_ID="$(jq -r .scriptId .gws.json)"
-gws script projects deployments list --params "{\"scriptId\":\"$SCRIPT_ID\"}" --format table
-gws script projects deployments delete --params "{\"scriptId\":\"$SCRIPT_ID\",\"deploymentId\":\"<id>\"}"
-```
-
-### 2b. Deploy with `clasp` (alternative)
+`clasp` is Google's official Apps Script CLI. It authenticates against
+Google's own OAuth client, which already includes the Apps Script scopes,
+so no GCP project setup is needed and there's no consent-screen work.
 
 ```sh
 # One-time setup
 npm install -g @google/clasp
-clasp login
-open "https://script.google.com/home/usersettings"   # enable Apps Script API
+clasp login                  # opens browser; log in as YOU (not a shared/service mailbox)
+open "https://script.google.com/home/usersettings"   # toggle Apps Script API → ON (per-user, once)
 clasp create --title "Drive Ownership Transfer" --type webapp --rootDir .
 
 # Push and deploy
 ./deploy.sh
 ```
 
-`deploy.sh` runs `clasp push -f` then `clasp deploy --description "…"`;
-inspect the resulting `/exec` URL with `clasp open` → **Deploy** →
-**Manage deployments**.
+`deploy.sh` runs `clasp push -f` then `clasp deploy --description "…"`.
+Grab the resulting web-app URL from `clasp open` → **Deploy** →
+**Manage deployments** (or `clasp deployments`).
+
+**Consent gate.** The first invocation of the web-app URL triggers
+Google's OAuth consent screen because the manifest requests Drive/Mail
+scopes. This is *user* consent, not admin consent — each caller sees the
+dialog once.
+
+**Advanced Drive Service.** The manifest already enables Drive v3 as an
+Advanced Service. `clasp push` uploads the manifest verbatim, so this is
+handled — you do not need to open the Apps Script editor unless you want
+to.
+
+### 2b. Deploy with `googleworkspace-cli` (advanced — see prerequisites first)
+
+**Read this whole section before running `./deploy-gws.sh`.**
+
+`gws` is a general-purpose Workspace CLI and does **not** ship with a
+pre-configured OAuth client for Apps Script. It authenticates against
+whatever GCP project the local `client_secret.json` belongs to. If that
+project's OAuth consent screen doesn't include the Apps Script scopes,
+every `gws script projects …` call returns `403 insufficient_scope` after
+you log in — even though the login itself succeeds.
+
+**Common failure mode.** Running `gws auth login` when your local `gws`
+config points at an unrelated GCP project (a common example inside ORFE:
+`orfe-calendars-api`) will:
+
+- prompt you to sign in as the **shared/service mailbox** that owns the
+  project (`orfe-calendars@princeton.edu`, not you), and
+- issue a token that is missing `https://www.googleapis.com/auth/script.projects`
+  and `.../auth/script.deployments`.
+
+Both of those are unrecoverable with a second login. If you see the URL
+starting with `client_id=584162953183-…` when you run `gws auth login`,
+that is the `orfe-calendars-api` client — **Ctrl-C**. Do not proceed.
+
+**What you must provision before using this path:**
+
+1. A dedicated GCP project (or an existing one you're willing to modify).
+2. Apps Script API enabled on it:
+   ```sh
+   gcloud services enable script.googleapis.com --project=<PROJECT_ID>
+   ```
+3. `script.projects` and `script.deployments` scopes added to the OAuth
+   consent screen: GCP Console → APIs & Services → OAuth consent screen →
+   **Scopes** → **Add or Remove Scopes** → add both.
+4. `gws` pointed at *that* project, not a leftover one. The cleanest way:
+   ```sh
+   gws auth logout
+   gws auth setup --project <PROJECT_ID> --login
+   ```
+   `--login` runs `gws auth login` at the end.
+
+Once the project is set up, run:
+
+```sh
+brew install googleworkspace-cli jq
+./deploy-gws.sh
+```
+
+`deploy-gws.sh` runs a preflight check that verifies (a) `gws` is
+installed, (b) you're logged in, (c) the current token carries the
+`script.projects` and `script.deployments` scopes, and (d) `.gws.json`
+either exists or can be created. It refuses to touch the API if any of
+those fail, and prints exactly which of the steps above to run.
+
+The mechanics under the hood, after preflight:
+
+1. `gws script projects create --json '{"title":"Drive Ownership Transfer"}'`
+   — creates a standalone script project, writes the resulting `scriptId`
+   to `.gws.json` (git-ignored). Reused on subsequent runs.
+2. `gws script +push --script "$SCRIPT_ID" --dir .` — uploads every
+   `*.gs`, `*.html`, and `appsscript.json` in this directory.
+3. `gws script projects versions create` — cuts an immutable version.
+4. `gws script projects deployments create` — publishes the version as
+   a web-app. The response includes the `webApp.url`.
+
+To tear down a deployment:
+
+```sh
+SCRIPT_ID="$(jq -r .scriptId .gws.json)"
+gws script projects deployments list \
+  --params "{\"scriptId\":\"$SCRIPT_ID\"}" --format table
+gws script projects deployments delete \
+  --params "{\"scriptId\":\"$SCRIPT_ID\",\"deploymentId\":\"<id>\"}"
+```
 
 ### 2c. Iterating
 
@@ -181,9 +214,8 @@ inspect the resulting `/exec` URL with `clasp open` → **Deploy** →
 ```
 
 Rebuilds the Docker test image, runs the tests, then re-pushes and
-re-deploys using whichever CLI you set up. Edit the script to point at
-`deploy-gws.sh` if you prefer the gws path (default is clasp for
-historical reasons).
+re-deploys via `deploy.sh` (clasp) by default. Set `GMOVE_CLI=gws` to use
+the gws path — only do so once §2b has been fully satisfied.
 
 ### 2d. Undeploying (clasp path)
 
