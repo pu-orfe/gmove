@@ -59,7 +59,12 @@ function mergeSelection(opts) {
   var preLogs = [];
   var seen = {};
 
-  function record(node) {
+  // moveToRoot marks items the SERVER-SIDE walk considers a "top of transfer" —
+  // i.e., items the user picked directly. Only these should be re-parented to
+  // the new owner's My Drive root; descendants inherit their (moved) parent
+  // and setting moveToRoot on them too would flatten the whole subtree onto
+  // the new owner's My Drive as siblings.
+  function record(node, moveToRoot) {
     if (seen[node.id]) return;
     seen[node.id] = true;
     if (isTransferable(node.owner, activeUser)) {
@@ -68,7 +73,8 @@ function mergeSelection(opts) {
         name: node.name,
         path: node.path,
         isFolder: !!node.isFolder,
-        owner: node.owner
+        owner: node.owner,
+        moveToRoot: !!moveToRoot
       });
     } else {
       preLogs.push({
@@ -81,8 +87,10 @@ function mergeSelection(opts) {
     }
   }
 
-  function walk(node) {
-    record(node);
+  // depth === 0 means "this node was directly chosen by the user"; deeper nodes
+  // were pulled in by the walk and inherit their parent's placement.
+  function walk(node, depth) {
+    record(node, depth === 0);
     if (!node.children || !node.children.length) return;
     var files = [];
     var subs  = [];
@@ -91,12 +99,13 @@ function mergeSelection(opts) {
       if (c.isFolder) subs.push(c);
       else files.push(c);
     }
-    for (var f = 0; f < files.length; f++) record(files[f]);
-    for (var s = 0; s < subs.length;  s++) walk(subs[s]);
+    for (var f = 0; f < files.length; f++) record(files[f], false);
+    for (var s = 0; s < subs.length;  s++) walk(subs[s], depth + 1);
   }
 
-  for (var r = 0; r < recursiveTrees.length; r++) walk(recursiveTrees[r]);
-  for (var e = 0; e < explicitItems.length;  e++) record(explicitItems[e]);
+  for (var r = 0; r < recursiveTrees.length; r++) walk(recursiveTrees[r], 0);
+  // Explicit items are always user-selected roots — they get moveToRoot=true.
+  for (var e = 0; e < explicitItems.length;  e++) record(explicitItems[e], true);
   return { plan: plan, preLogs: preLogs };
 }
 

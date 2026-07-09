@@ -112,6 +112,31 @@ test('mergeSelection: empty inputs → empty plan and empty preLogs', () => {
   assert.deepEqual(r, { plan: [], preLogs: [] });
 });
 
+test('mergeSelection: moveToRoot is true for user-picked roots only, false for descendants', () => {
+  // The user recursively selected Root/. That means Root itself is a "root of transfer"
+  // (moveToRoot: true). Every descendant is pulled in by the walk and must inherit its
+  // parent — moveToRoot: false — otherwise it would get flattened onto the new owner's
+  // My Drive root as a sibling of Root, exploding the folder structure.
+  const t = tree('root', 'Root', true, 'me@x.com', [
+    { id: 'a', name: 'a.txt', path: 'Root/a.txt', isFolder: false, owner: 'me@x.com', children: [] },
+    { id: 'sub', name: 'Sub', path: 'Root/Sub', isFolder: true, owner: 'me@x.com', children: [
+      { id: 'b', name: 'b.txt', path: 'Root/Sub/b.txt', isFolder: false, owner: 'me@x.com', children: [] }
+    ]}
+  ]);
+  const explicit = [
+    { id: 'z', name: 'orphan.txt', path: 'orphan.txt', isFolder: false, owner: 'me@x.com' }
+  ];
+  const { plan } = L.mergeSelection({
+    recursiveTrees: [t], explicitItems: explicit, activeUserEmail: 'me@x.com'
+  });
+  const byId = Object.fromEntries(plan.map(p => [p.id, p]));
+  assert.equal(byId.root.moveToRoot, true,   'user-picked recursive root moves to new owner root');
+  assert.equal(byId.a.moveToRoot,    false,  'file inside a recursive root stays inside it');
+  assert.equal(byId.sub.moveToRoot,  false,  'subfolder of a recursive root stays inside it');
+  assert.equal(byId.b.moveToRoot,    false,  'file two levels down stays inside its parent');
+  assert.equal(byId.z.moveToRoot,    true,   'explicit item is a root by definition');
+});
+
 test('mergeSelection: explicit-only selection (no recursive) produces the items in order', () => {
   const explicit = [
     { id: 'x', name: 'x.txt', path: 'x.txt', isFolder: false, owner: 'me@x.com' },

@@ -469,21 +469,95 @@ function runBatch_() {
   return { done: true, processed: state.cursor, total: state.plan.length };
 }
 
+/**
+ * Transfer ownership of one Drive item via the Drive REST API v3 directly.
+ *
+ * Uses the same OAuth token DriveApp uses (no manifest / advanced-service
+ * changes; the linter that stripped the manifest cannot break this path).
+ * Two behaviors that DriveApp.setOwner cannot do on its own:
+ *
+ *   - moveToNewOwnersRoot: for items the user picked directly (item.moveToRoot),
+ *     Drive re-parents the item to the new owner's My Drive root so it is
+ *     visible in a generic "My Drive" listing. Descendants pulled in by a
+ *     recursive walk have moveToRoot=false — they follow their parent and
+ *     keep the subtree intact.
+ *
+ *   - sendNotificationEmail: kept at true (Drive's default for role=owner)
+ *     because a prior attempt at suppressing it triggered "consent required"
+ *     failures. Once we have a clean sample of the working path, we can
+ *     revisit that.
+ *
+ * On failure we log the full Drive API response body to Stackdriver so
+ * `clasp open-logs` gives you the actual reason instead of a wrapped
+ * message.
+ */
 function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
+  var moveToRoot = !!item.moveToRoot;
+  var url = 'https://www.googleapis.com/drive/v3/files/' +
+            encodeURIComponent(item.id) +
+            '/permissions?transferOwnership=true' +
+            '&moveToNewOwnersRoot=' + (moveToRoot ? 'true' : 'false') +
+            '&sendNotificationEmail=true';
   try {
-    var handle = item.isFolder ? DriveApp.getFolderById(item.id) : DriveApp.getFileById(item.id);
-    handle.setOwner(newOwnerEmail);
+    var response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      payload: JSON.stringify({
+        role: 'owner',
+        type: 'user',
+        emailAddress: newOwnerEmail
+      }),
+      muteHttpExceptions: true
+    });
+    var code = response.getResponseCode();
+    if (code >= 200 && code < 300) {
+      return {
+        timestamp: ts, id: item.id, name: item.name, path: item.path,
+        status: STATUS.SUCCESS,
+        message: 'Transferred to ' + newOwnerEmail +
+          (moveToRoot ? ' (moved to their My Drive root).' : ' (kept in transferred subtree).')
+      };
+    }
+    // Non-2xx: log everything we know so a failure can be diagnosed after the fact.
+    var body = response.getContentText();
+    console.error('gmove transfer failed: ' + JSON.stringify({
+      httpStatus: code,
+      itemId: item.id,
+      itemName: item.name,
+      itemPath: item.path,
+      isFolder: !!item.isFolder,
+      moveToRoot: moveToRoot,
+      newOwner: newOwnerEmail,
+      driveBody: body
+    }));
     return {
       timestamp: ts, id: item.id, name: item.name, path: item.path,
-      status: STATUS.SUCCESS, message: 'Ownership transferred to ' + newOwnerEmail
+      status: STATUS.FAILED,
+      message: extractDriveError_(body) || ('Drive API HTTP ' + code)
     };
   } catch (e) {
+    var errMsg = e && e.message ? e.message : String(e);
+    console.error('gmove transfer threw: ' + JSON.stringify({
+      itemId: item.id, itemName: item.name, itemPath: item.path,
+      isFolder: !!item.isFolder, moveToRoot: moveToRoot,
+      newOwner: newOwnerEmail, error: errMsg
+    }));
     return {
       timestamp: ts, id: item.id, name: item.name, path: item.path,
-      status: STATUS.FAILED, message: e && e.message ? e.message : String(e)
+      status: STATUS.FAILED, message: errMsg
     };
   }
+}
+
+function extractDriveError_(body) {
+  if (!body) return '';
+  try {
+    var j = JSON.parse(body);
+    if (j && j.error && j.error.message) return j.error.message;
+  } catch (e) { /* not JSON — fall through */ }
+  return '';
 }
 
 // ---------- State via PropertiesService ------------------------------------

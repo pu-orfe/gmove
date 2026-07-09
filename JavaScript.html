@@ -597,7 +597,11 @@
     var msg = 'Transfer ownership to ' + newOwner + '?\n\n' +
       recursiveIds.length + ' folder(s) will be transferred *with everything inside*.\n' +
       explicitIds.length  + ' individual item(s) will be transferred.\n\n' +
-      'Non-owned items in the walk will be skipped automatically.';
+      'Non-owned items in the walk will be skipped automatically.\n\n' +
+      'IMPORTANT: Selected items will be moved to ' + newOwner + '\'s My Drive root ' +
+      'so they show up in their normal Drive listings. This also means the items will ' +
+      'disappear from YOUR folder tree (you will keep editor access; find them via ' +
+      '"Shared with me" or by direct link).';
     if (!confirm(msg)) return;
     els.loadBtn.disabled = true;
     els.commitBtn.disabled = true;

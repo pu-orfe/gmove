@@ -295,6 +295,30 @@ to tear a specific one down.
   contained files. That way, if the run has to hand off to a resume trigger
   mid-batch, no orphaned file sits inside a still-old-owner folder for
   longer than necessary.
+- **Where the transferred items land.** Every transfer goes through Drive
+  REST v3 (`POST /files/{id}/permissions` with `transferOwnership=true`)
+  via `UrlFetchApp` — not `DriveApp.setOwner`. That gives us
+  `moveToNewOwnersRoot=true`, which is applied only to items the user
+  picked directly (recursive-folder roots + explicit items — the
+  `moveToRoot` flag on each plan entry, computed by `mergeSelection`).
+  Descendants pulled in by the walk keep their existing parent, so the
+  subtree structure survives the transfer intact — a `Project-X/` folder
+  moves as one thing to the new owner's My Drive, with all its files still
+  inside it. Notification email is left at Drive's default (`true`) — a
+  prior attempt at silent transfers triggered consent-required errors, and
+  the notification appears to be an implicit consent signal.
+- **Old owner loses their folder view.** Because top-level items move to
+  the new owner's My Drive root, they disappear from the initiator's
+  folder tree. The initiator retains editor access (Drive adds them as a
+  writer when ownership transfers away), so they can still open the items
+  via "Shared with me" or a direct link — they just are not in the
+  original folder anymore. The client confirmation dialog spells this out
+  before commit.
+- **Failure diagnostics.** Every non-2xx Drive API response is logged to
+  Stackdriver via `console.error` with the item id/name/path, the HTTP
+  status, the flag values sent, and the full Drive JSON response body.
+  When a transfer fails, `clasp open-logs` gives you the exact reason
+  Drive rejected it rather than a wrapped Apps Script exception.
 - **Batching.** Every ~4.5 minutes (see `TIME_BUDGET_MS` in `Logic.gs`) the
   server checkpoints the current state to `ScriptProperties` under key
   `gmove.state.v1` and schedules a one-shot time-driven trigger that calls
