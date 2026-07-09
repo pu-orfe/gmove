@@ -9,6 +9,8 @@
     loadMyDriveBtn:  document.getElementById('loadMyDriveBtn'),
     previewBtn:      document.getElementById('previewBtn'),
     commitBtn:       document.getElementById('commitBtn'),
+    queueBody:       document.getElementById('queue-body'),
+    refreshQueueBtn: document.getElementById('refreshQueueBtn'),
     status:          document.getElementById('status'),
     treeCard:        document.getElementById('tree-card'),
     tree:            document.getElementById('tree'),
@@ -60,6 +62,145 @@
   els.selectAllBtn.addEventListener('click', onSelectAllInView);
   els.clearAllBtn.addEventListener('click', onClearAll);
   els.closePreviewBtn.addEventListener('click', hidePreview);
+  els.refreshQueueBtn.addEventListener('click', function () { fetchQueue(true); });
+
+  // ---- Queue poll ---------------------------------------------------------
+  // Fetch on page load; then poll every 8s while any job is present. When
+  // the registry goes empty, stop polling to avoid burning ScriptProperties
+  // quota. Immediate refresh on tab-return so a user coming back after
+  // background throttling never stares at stale data.
+  var queuePollTimer = null;
+  var lastQueueEmail = null;
+
+  function scheduleQueuePoll() {
+    if (queuePollTimer) return;
+    queuePollTimer = setInterval(function () {
+      if (document.visibilityState !== 'visible') return; // respect Chrome throttling
+      fetchQueue(false);
+    }, 8000);
+  }
+  function stopQueuePoll() {
+    if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null; }
+  }
+
+  function fetchQueue(showLoadingState) {
+    if (showLoadingState) els.refreshQueueBtn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (payload) {
+        renderQueue(payload && payload.jobs ? payload.jobs : []);
+        els.refreshQueueBtn.disabled = false;
+      })
+      .withFailureHandler(function (err) {
+        els.refreshQueueBtn.disabled = false;
+        // Do not display in the top status line — the queue is peripheral.
+        // A stale-but-present table is fine; a failed poll is silent.
+        if (window.console) console.warn('listJobs failed:', errMsg(err));
+      })
+      .listJobs();
+  }
+
+  function renderQueue(jobs) {
+    els.queueBody.innerHTML = '';
+    if (!jobs || jobs.length === 0) {
+      var empty = document.createElement('p');
+      empty.className = 'pt-queue-empty';
+      empty.textContent = 'No jobs running.';
+      els.queueBody.appendChild(empty);
+      stopQueuePoll();
+      return;
+    }
+    var me = lastQueueEmail || (state && state.activeUserEmail) || '';
+    var table = document.createElement('table');
+    table.className = 'pt-queue-table';
+    var thead = document.createElement('thead');
+    thead.innerHTML =
+      '<tr>' +
+        '<th>Initiator</th>' +
+        '<th>New owner</th>' +
+        '<th>Folder</th>' +
+        '<th>Progress</th>' +
+        '<th>Started</th>' +
+        '<th>Status</th>' +
+      '</tr>';
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    for (var i = 0; i < jobs.length; i++) {
+      tbody.appendChild(renderQueueRow(jobs[i], me));
+    }
+    table.appendChild(tbody);
+    els.queueBody.appendChild(table);
+    scheduleQueuePoll();
+  }
+
+  function renderQueueRow(job, me) {
+    var tr = document.createElement('tr');
+    if (job.initiator && me && String(job.initiator).toLowerCase() === String(me).toLowerCase()) {
+      tr.className = 'pt-queue-row--mine';
+    }
+    tr.appendChild(cell(job.initiator || '—'));
+    tr.appendChild(cell(job.newOwnerEmail || '—'));
+    var folderCell = cell((job.targetFolderId || '').slice(-8) || '—');
+    folderCell.className = 'pt-queue__folder';
+    folderCell.title = job.targetFolderId || '';
+    tr.appendChild(folderCell);
+    tr.appendChild(progressCell(job.processed || 0, job.total || 0));
+    tr.appendChild(cell(shortTime(job.startedAt)));
+    tr.appendChild(statusPillCell(job.status));
+    return tr;
+  }
+
+  function cell(text) {
+    var td = document.createElement('td');
+    td.textContent = text == null ? '' : String(text);
+    return td;
+  }
+  function progressCell(done, total) {
+    var td = document.createElement('td');
+    var pct = total > 0 ? Math.min(100, Math.round(100 * done / total)) : 0;
+    var bar = document.createElement('span');
+    bar.className = 'pt-progress-bar';
+    var fill = document.createElement('span');
+    fill.className = 'pt-progress-bar__fill';
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    var text = document.createElement('span');
+    text.className = 'pt-progress-text';
+    text.textContent = done + '/' + total;
+    td.appendChild(bar);
+    td.appendChild(text);
+    return td;
+  }
+  function statusPillCell(status) {
+    var td = document.createElement('td');
+    var pill = document.createElement('span');
+    var kind = status === 'running' ? 'running'
+             : status === 'queued'  ? 'queued'
+             : status === 'report_pending' ? 'report-pending'
+             : 'off';
+    pill.className = 'pt-pill pt-pill--' + kind;
+    pill.textContent = status || '—';
+    td.appendChild(pill);
+    return td;
+  }
+  function shortTime(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    // "HH:MM" in the user's local time
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') fetchQueue(false);
+  });
+
+  // Kick off the initial fetch. The doGet template already exposes the
+  // active user's email on the "Signed in as" line — reuse that so we can
+  // highlight the caller's rows without an extra RPC.
+  var signedInCode = document.querySelector('.pt-signed-in code');
+  if (signedInCode) lastQueueEmail = signedInCode.textContent.trim();
+  fetchQueue(true);
 
   // ---- Status helpers -----------------------------------------------------
   function setStatus(msg, kind) {
@@ -622,12 +763,15 @@
   function onCommitSuccess(result) {
     els.loadBtn.disabled = false;
     els.commitBtn.disabled = false;
-    if (result && result.done) {
-      setStatus('Transfer complete. ' + result.processed + '/' + result.total + ' processed. Report emailed.', 'ok');
+    if (result && result.queued) {
+      setStatus(
+        'Queued behind ' + (result.ahead || 0) + ' other job(s). It will start as soon as the current one finishes; ' +
+        'you will get an email when yours completes. Watch the Job queue at the top for progress.', 'ok'
+      );
     } else {
-      setStatus('Checkpoint saved. Processed ' + (result && result.processed) + '/' + (result && result.total) +
-                '. Resume trigger scheduled — email will arrive on completion.', 'ok');
+      setStatus('Job started. Progress will appear in the Job queue at the top. You will get an email when it completes.', 'ok');
     }
+    fetchQueue(false);
   }
   function onCommitFailure(err) {
     els.loadBtn.disabled = false;

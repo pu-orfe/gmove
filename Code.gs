@@ -4,11 +4,32 @@
  * Public entrypoints:
  *   doGet()                → serves the web UI (Index.html) or a "not authorized" page
  *   browseFolder(id)       → RPC: shallow one-level lazy listing for the tree UI
- *   commitTransfer(payload)→ RPC: kicks off Phase 2 production run
+ *   getMyDriveRoot()       → RPC: My Drive shortcut for the browse tree
+ *   previewTransfer(payload) → RPC: dry-run summary + email
+ *   commitTransfer(payload)→ RPC: enqueues a run; runs it if nothing else is in flight
+ *   listJobs()             → RPC: registry of running/queued jobs for the queue UI
  *   resumeTransfer()       → time-driven trigger handler for batching (NOT rate-gated)
  */
 
-var PROP_STATE_KEY = 'gmove.state.v1';
+// Legacy single-job key, retained for one-shot migration inside runBatch_.
+// New jobs use the registry + per-job state keys defined below.
+var PROP_STATE_KEY_LEGACY = 'gmove.state.v1';
+
+// Multi-job storage. Registry holds meta only (small); per-job state keys
+// hold the big plan + log arrays.
+var PROP_REGISTRY_KEY = 'gmove.jobs.registry.v1';
+var PROP_STATE_PREFIX = 'gmove.jobs.state.';
+
+// Cache slot for listJobs — pollers hit it every 8s, so shave load with a
+// 2-second TTL. Mutators invalidate immediately.
+var CACHE_REGISTRY_KEY = 'gmove.jobs.registry.cache';
+var CACHE_REGISTRY_TTL = 2;
+
+// Script lock timeout for the critical section around registry/state writes
+// and trigger management. Apps Script tri-color LockService allows exactly
+// one holder at a time; 30s is generous vs. the ~1s of work we do inside.
+var LOCK_TIMEOUT_MS = 30 * 1000;
+
 var RESUME_TRIGGER_HANDLER = 'resumeTransfer';
 
 // Serialized-state ceiling before we refuse to persist. ScriptProperties per-store
@@ -327,21 +348,27 @@ function commitTransfer(payload) {
   var newOwnerEmail = String((payload && payload.newOwnerEmail) || '').trim();
   if (!newOwnerEmail) throw new Error('New owner email is required.');
 
+  // Walk + merge happens outside the lock so a long DriveApp walk doesn't
+  // block other users' listJobs polls. The lock only guards the tight
+  // registry + state + trigger transaction after the plan is built.
   var built = walkAndMerge_(payload);
   var merged = built.merged;
 
+  var jobId = Utilities.getUuid();
+  var startedAt = new Date().toISOString();
   var state = {
+    jobId: jobId,
     targetFolderId: (payload && payload.targetFolderId) || '',
     newOwnerEmail: newOwnerEmail,
     initiatorEmail: built.activeUser,
-    startedAt: new Date().toISOString(),
+    startedAt: startedAt,
     plan: merged.plan,
     cursor: 0,
     log: merged.preLogs.slice()
   };
 
-  // Fail fast if the plan would blow the ScriptProperties quota. We check
-  // AFTER building the plan but BEFORE saveState_, so failure loses no work.
+  // Fail fast if the plan would blow the ScriptProperties quota. Check now,
+  // before we acquire the lock or write anything.
   var raw = JSON.stringify(state);
   if (raw.length > MAX_STATE_BYTES) {
     throw new Error(
@@ -351,9 +378,58 @@ function commitTransfer(payload) {
     );
   }
 
-  saveState_(state);
-  clearResumeTriggers_();
-  return runBatch_();
+  var meta = {
+    jobId:           jobId,
+    initiator:       built.activeUser,
+    newOwnerEmail:   newOwnerEmail,
+    targetFolderId:  state.targetFolderId,
+    startedAt:       startedAt,
+    processed:       0,
+    total:           merged.plan.length,
+    checkpointedAt:  null,
+    status:          'queued'
+  };
+
+  var result = withScriptLock_(function () {
+    migrateLegacyStateIfPresent_();
+    var registry = pruneJobsRegistry(loadJobsRegistry_());
+    var runningExists = false;
+    for (var i = 0; i < registry.length; i++) {
+      if (registry[i].status === 'running') { runningExists = true; break; }
+    }
+    if (!runningExists) meta.status = 'running';
+    registry.push(meta);
+    saveJobsRegistry_(registry);
+    saveJobState_(jobId, state);
+    // Kick off runBatch_ immediately when we are first in line, otherwise
+    // the existing runner will pick this job up when it finishes its
+    // current one via its own scheduleResume_ call at the end of a batch.
+    if (!runningExists) ensureResumeTrigger_(0);
+    var queuedAhead = 0;
+    for (var j = 0; j < registry.length; j++) {
+      if (registry[j].jobId === jobId) break;
+      if (registry[j].status !== 'done') queuedAhead++;
+    }
+    return { jobId: jobId, queued: runningExists, ahead: queuedAhead };
+  });
+  return result;
+}
+
+/**
+ * Read-only snapshot of the current jobs registry for the queue UI. Cached
+ * for 2 seconds because pollers hit this every 8s and PropertiesService
+ * reads are serialized script-wide. Writers invalidate the cache slot.
+ */
+function listJobs() {
+  assertAuthorized_();
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(CACHE_REGISTRY_KEY);
+  if (hit) return JSON.parse(hit);
+  var jobs = loadJobsRegistry_();
+  var payload = { jobs: jobs, fetchedAt: new Date().toISOString() };
+  try { cache.put(CACHE_REGISTRY_KEY, JSON.stringify(payload), CACHE_REGISTRY_TTL); }
+  catch (e) { /* cache is best-effort */ }
+  return payload;
 }
 
 /**
@@ -441,32 +517,102 @@ function resolveItem_(id) {
 
 function resumeTransfer() {
   // Runs from a time-driven trigger; there is no active user, so DO NOT gate.
-  clearResumeTriggers_();
+  // Do NOT blanket-clear triggers here — ensureResumeTrigger_ is the only
+  // path that creates them, and it keeps the "at most one" invariant. If
+  // this handler ran because a scheduled trigger fired, that trigger is
+  // already consumed.
   runBatch_();
 }
 
+/**
+ * Advance whichever job is currently in-flight (or promote the oldest
+ * queued one if nothing is running). Returns after either a checkpoint,
+ * completion, or if nothing was pending. Handles at most ONE job per
+ * invocation — the resume trigger cycle drains the queue over multiple
+ * calls. That keeps the per-invocation time budget simple and prevents
+ * one huge job's plan from starving another.
+ */
 function runBatch_() {
-  var state = loadState_();
-  if (!state) return { done: true, message: 'No pending transfer state.' };
+  // Pick + load under the lock so nothing else can grab or delete our job.
+  var loaded = withScriptLock_(function () {
+    migrateLegacyStateIfPresent_();
+    var registry = pruneJobsRegistry(loadJobsRegistry_());
+    var job = pickNextJob(registry);
+    if (!job) {
+      saveJobsRegistry_(registry);
+      invalidateRegistryCache_();
+      return null;
+    }
+    if (job.status === 'queued') {
+      job.status = 'running';
+      saveJobsRegistry_(registry);
+      invalidateRegistryCache_();
+    }
+    var state = loadJobState_(job.jobId);
+    if (!state) {
+      // Registry meta without state is a corrupted entry — drop it and let
+      // the next tick pick something else.
+      console.error('gmove: registry entry with no state, dropping: ' + JSON.stringify(job));
+      removeJobFromRegistry_(job.jobId);
+      return null;
+    }
+    return { job: job, state: state };
+  });
+  if (!loaded) return { done: true, message: 'No pending jobs.' };
 
+  var job = loaded.job;
+  var state = loaded.state;
   var startedAtMs = Date.now();
   var newOwner = state.newOwnerEmail;
 
-  while (state.cursor < state.plan.length) {
-    if (shouldCheckpoint(startedAtMs, Date.now(), TIME_BUDGET_MS)) {
-      saveState_(state);
-      scheduleResume_();
-      return { done: false, processed: state.cursor, total: state.plan.length };
+  // If this is a report_pending job, all items were already processed; go
+  // straight to finalize (which will retry mail).
+  var alreadyDone = state.cursor >= state.plan.length;
+  if (!alreadyDone) {
+    while (state.cursor < state.plan.length) {
+      if (shouldCheckpoint(startedAtMs, Date.now(), TIME_BUDGET_MS)) {
+        withScriptLock_(function () {
+          saveJobState_(job.jobId, state);
+          updateJobMeta_(job.jobId, {
+            processed: state.cursor,
+            checkpointedAt: new Date().toISOString()
+          });
+          ensureResumeTrigger_(60 * 1000);
+        });
+        return { done: false, jobId: job.jobId, processed: state.cursor, total: state.plan.length };
+      }
+      var item = state.plan[state.cursor];
+      state.log.push(attemptTransfer_(item, newOwner));
+      state.cursor++;
     }
-    var item = state.plan[state.cursor];
-    var entry = attemptTransfer_(item, newOwner);
-    state.log.push(entry);
-    state.cursor++;
   }
 
-  clearState_();
-  finalizeAndReport_(state);
-  return { done: true, processed: state.cursor, total: state.plan.length };
+  // Completion path — mail first, prune only on success.
+  var mailStatus = sendReport_(state);
+  withScriptLock_(function () {
+    if (mailStatus.sent) {
+      deleteJobState_(job.jobId);
+      removeJobFromRegistry_(job.jobId);
+    } else {
+      // Keep state; keep the entry as report_pending so the next resume
+      // trigger retries the mail send. Log so operators can spot repeated
+      // failures in Stackdriver.
+      console.error('gmove: report send failed for ' + job.jobId + ' — retaining as report_pending. ' +
+                    (mailStatus.error || ''));
+      updateJobMeta_(job.jobId, { status: 'report_pending', processed: state.cursor });
+    }
+    // Whether success or retention, if there are more jobs waiting, kick a
+    // near-future trigger so runBatch_ picks the next one up.
+    var registry = pruneJobsRegistry(loadJobsRegistry_());
+    if (registry.length > 0) ensureResumeTrigger_(10 * 1000);
+  });
+  return {
+    done: mailStatus.sent,
+    jobId: job.jobId,
+    processed: state.cursor,
+    total: state.plan.length,
+    reportPending: !mailStatus.sent
+  };
 }
 
 /**
@@ -560,37 +706,145 @@ function extractDriveError_(body) {
   return '';
 }
 
-// ---------- State via PropertiesService ------------------------------------
+// ---------- Registry + per-job state via PropertiesService -----------------
 
-function saveState_(state) {
-  PropertiesService.getScriptProperties().setProperty(PROP_STATE_KEY, JSON.stringify(state));
+function loadJobsRegistry_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(PROP_REGISTRY_KEY);
+  if (!raw) return [];
+  try { return JSON.parse(raw) || []; }
+  catch (e) {
+    console.error('gmove: corrupt registry, resetting: ' + (e && e.message));
+    return [];
+  }
 }
-function loadState_() {
-  var raw = PropertiesService.getScriptProperties().getProperty(PROP_STATE_KEY);
+function saveJobsRegistry_(registry) {
+  PropertiesService.getScriptProperties().setProperty(PROP_REGISTRY_KEY, JSON.stringify(registry || []));
+  invalidateRegistryCache_();
+}
+function invalidateRegistryCache_() {
+  try { CacheService.getScriptCache().remove(CACHE_REGISTRY_KEY); }
+  catch (e) { /* best-effort */ }
+}
+
+function loadJobState_(jobId) {
+  var raw = PropertiesService.getScriptProperties().getProperty(PROP_STATE_PREFIX + jobId);
   return raw ? JSON.parse(raw) : null;
 }
-function clearState_() {
-  PropertiesService.getScriptProperties().deleteProperty(PROP_STATE_KEY);
+function saveJobState_(jobId, state) {
+  PropertiesService.getScriptProperties().setProperty(PROP_STATE_PREFIX + jobId, JSON.stringify(state));
+}
+function deleteJobState_(jobId) {
+  PropertiesService.getScriptProperties().deleteProperty(PROP_STATE_PREFIX + jobId);
 }
 
-function scheduleResume_() {
-  ScriptApp.newTrigger(RESUME_TRIGGER_HANDLER)
-    .timeBased()
-    .after(60 * 1000)
-    .create();
+function removeJobFromRegistry_(jobId) {
+  var registry = loadJobsRegistry_();
+  var out = [];
+  for (var i = 0; i < registry.length; i++) {
+    if (registry[i].jobId !== jobId) out.push(registry[i]);
+  }
+  saveJobsRegistry_(out);
 }
-function clearResumeTriggers_() {
+
+function updateJobMeta_(jobId, patch) {
+  var registry = loadJobsRegistry_();
+  for (var i = 0; i < registry.length; i++) {
+    if (registry[i].jobId === jobId) {
+      for (var k in patch) if (patch.hasOwnProperty(k)) registry[i][k] = patch[k];
+    }
+  }
+  saveJobsRegistry_(registry);
+}
+
+/**
+ * One-shot migration for a pre-refactor deploy that left a job mid-flight
+ * under the legacy PROP_STATE_KEY_LEGACY key. Runs inside the lock (always
+ * called from `commitTransfer` / `runBatch_` critical sections). Idempotent
+ * — after the first call the legacy key is gone.
+ */
+function migrateLegacyStateIfPresent_() {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty(PROP_STATE_KEY_LEGACY);
+  if (!raw) return;
+  var registry = loadJobsRegistry_();
+  var wasEmpty = registry.length === 0;
+  props.deleteProperty(PROP_STATE_KEY_LEGACY);
+  if (!wasEmpty) {
+    console.warn('gmove: legacy state key present alongside a live registry; discarded.');
+    return;
+  }
+  try {
+    var legacy = JSON.parse(raw);
+    var jobId = 'legacy-' + Utilities.getUuid();
+    var meta = {
+      jobId:           jobId,
+      initiator:       legacy.initiatorEmail || '',
+      newOwnerEmail:   legacy.newOwnerEmail || '',
+      targetFolderId:  legacy.targetFolderId || '',
+      startedAt:       legacy.startedAt || new Date().toISOString(),
+      processed:       legacy.cursor || 0,
+      total:           (legacy.plan && legacy.plan.length) || 0,
+      checkpointedAt:  new Date().toISOString(),
+      status:          'running'
+    };
+    saveJobState_(jobId, {
+      jobId: jobId,
+      targetFolderId: meta.targetFolderId,
+      newOwnerEmail: meta.newOwnerEmail,
+      initiatorEmail: meta.initiator,
+      startedAt: meta.startedAt,
+      plan: legacy.plan || [],
+      cursor: legacy.cursor || 0,
+      log: legacy.log || []
+    });
+    saveJobsRegistry_([meta]);
+    console.info('gmove: migrated legacy state to job ' + jobId);
+  } catch (e) {
+    console.error('gmove: legacy state was unparseable; deleted anyway: ' + (e && e.message));
+  }
+}
+
+// ---------- Trigger management ---------------------------------------------
+
+/**
+ * Ensure at most one resume trigger exists. If one already exists, leave it
+ * alone (do not shorten or lengthen). If none exists, create one at the
+ * requested delay. Always called from within a lock so no two callers race
+ * to create duplicates.
+ */
+function ensureResumeTrigger_(delayMs) {
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === RESUME_TRIGGER_HANDLER) {
-      ScriptApp.deleteTrigger(triggers[i]);
+    if (triggers[i].getHandlerFunction() === RESUME_TRIGGER_HANDLER) return;
+  }
+  ScriptApp.newTrigger(RESUME_TRIGGER_HANDLER)
+    .timeBased()
+    .after(Math.max(1000, delayMs || 0))
+    .create();
+}
+
+// ---------- Script lock helper ---------------------------------------------
+
+function withScriptLock_(fn) {
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(LOCK_TIMEOUT_MS)) {
+      throw new Error('Could not acquire script lock within ' + LOCK_TIMEOUT_MS + 'ms.');
     }
+    return fn();
+  } finally {
+    try { lock.releaseLock(); } catch (_) { /* ignore */ }
   }
 }
 
 // ---------- Reporting -------------------------------------------------------
 
-function finalizeAndReport_(state) {
+/**
+ * Format and send the completion report. Returns {sent, error?} so the
+ * caller can decide whether to prune the job or keep it as report_pending.
+ * Never throws.
+ */
+function sendReport_(state) {
   var summary = summarizeLog(state.log);
   var completedAt = new Date().toISOString();
   var html = formatReportHtml({
@@ -609,7 +863,10 @@ function finalizeAndReport_(state) {
       htmlBody: html,
       attachments: [attachment]
     });
+    return { sent: true };
   } catch (e) {
-    console.error('MailApp.sendEmail failed: ' + (e && e.message));
+    var msg = e && e.message ? e.message : String(e);
+    console.error('MailApp.sendEmail failed: ' + msg);
+    return { sent: false, error: msg };
   }
 }

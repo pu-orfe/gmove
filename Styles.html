@@ -341,6 +341,9 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
 .pt-pill--skip   { background: var(--color-neutral-10); color: var(--color-neutral-85); }
 .pt-pill--off    { background: var(--color-neutral-5);  color: var(--color-neutral-60); border: 1px solid var(--color-neutral-20); }
 .pt-pill--locked { background: var(--color-neutral-90); color: var(--color-white); }
+.pt-pill--queued        { background: var(--color-neutral-10); color: var(--color-neutral-85); }
+.pt-pill--running       { background: var(--color-brand-70);   color: var(--color-white); }
+.pt-pill--report-pending { background: #fff3e0; color: #c1560e; border: 1px solid #ffcc80; }
 
 .pt-counters {
   margin: var(--space-3) 0 var(--space-4);
@@ -574,6 +577,69 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
   color: var(--color-brand-80);
   background: var(--color-brand-10);
   font-weight: var(--font-weight-semibold);
+}
+
+/* Job queue card (section 0). One row per registry entry. Columns collapse
+   to a stack on narrow viewports; the progress bar stays visible so a
+   glance at the card reveals what is running. */
+.pt-queue-body { margin-top: var(--space-2); }
+.pt-queue-empty {
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-60);
+  margin: var(--space-2) 0;
+}
+.pt-queue-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-3);
+}
+.pt-queue-table th,
+.pt-queue-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-neutral-10);
+  text-align: left;
+  vertical-align: middle;
+}
+.pt-queue-table thead th {
+  font-family: var(--font-label);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-neutral-60);
+  border-bottom: 2px solid var(--color-neutral-100);
+}
+.pt-queue-table tr.pt-queue-row--mine {
+  border-left: 3px solid var(--color-brand-70);
+  background: var(--color-brand-10);
+}
+.pt-queue-table td.pt-queue__folder {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-neutral-60);
+}
+.pt-progress-bar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 140px;
+  height: 8px;
+  background: var(--color-neutral-10);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.pt-progress-bar__fill {
+  height: 100%;
+  background: var(--color-brand-70);
+  transition: width 0.3s ease;
+}
+.pt-progress-text {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-neutral-85);
 }
 
 /* Unauthorized page — rendered by renderUnauthorized_() when a princeton.edu

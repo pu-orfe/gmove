@@ -262,3 +262,43 @@ test('dryRunToCsv handles empty inputs', () => {
   const csv = L.dryRunToCsv([], []);
   assert.equal(csv, 'bucket,kind,name,id,path,owner_or_reason');
 });
+
+test('pruneJobsRegistry drops done entries, keeps everything else', () => {
+  assert.deepEqual(L.pruneJobsRegistry([]), []);
+  assert.deepEqual(L.pruneJobsRegistry(null), []);
+  assert.deepEqual(
+    L.pruneJobsRegistry([
+      { jobId: 'a', status: 'running' },
+      { jobId: 'b', status: 'done' },
+      { jobId: 'c', status: 'queued' },
+      { jobId: 'd', status: 'report_pending' }
+    ]).map(j => j.jobId),
+    ['a', 'c', 'd']
+  );
+});
+
+test('pickNextJob returns null for an empty registry', () => {
+  assert.equal(L.pickNextJob([]), null);
+  assert.equal(L.pickNextJob(null), null);
+});
+
+test('pickNextJob prefers the running job when one exists', () => {
+  const running = { jobId: 'a', status: 'running', startedAt: '2026-01-02T00:00:00Z' };
+  const queued  = { jobId: 'b', status: 'queued',  startedAt: '2026-01-01T00:00:00Z' };
+  assert.equal(L.pickNextJob([queued, running]).jobId, 'a');
+});
+
+test('pickNextJob returns oldest queued when no job is running', () => {
+  const newer = { jobId: 'a', status: 'queued', startedAt: '2026-01-02T00:00:00Z' };
+  const older = { jobId: 'b', status: 'queued', startedAt: '2026-01-01T00:00:00Z' };
+  assert.equal(L.pickNextJob([newer, older]).jobId, 'b');
+});
+
+test('pickNextJob falls back to report_pending only when no queued/running exists', () => {
+  const rp     = { jobId: 'a', status: 'report_pending', startedAt: '2026-01-01T00:00:00Z' };
+  const queued = { jobId: 'b', status: 'queued',         startedAt: '2026-01-02T00:00:00Z' };
+  // Queued outranks report_pending — mail retries are lowest priority.
+  assert.equal(L.pickNextJob([rp, queued]).jobId, 'b');
+  // Alone, report_pending wins.
+  assert.equal(L.pickNextJob([rp]).jobId, 'a');
+});

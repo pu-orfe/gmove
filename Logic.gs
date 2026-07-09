@@ -440,6 +440,56 @@ function joinPath(parent, name) {
   return parent + '/' + name;
 }
 
+/**
+ * Remove any job whose status is 'done'. In the current deployment 'done'
+ * jobs are pruned immediately by finalizeAndReport_, so this helper is a
+ * defensive safeguard against a bug or a hand-edited registry — it should
+ * always be a no-op in production.
+ */
+function pruneJobsRegistry(registry) {
+  if (!registry || !registry.length) return [];
+  var out = [];
+  for (var i = 0; i < registry.length; i++) {
+    if (registry[i] && registry[i].status !== 'done') out.push(registry[i]);
+  }
+  return out;
+}
+
+/**
+ * Pick the job that runBatch_ should service next.
+ *
+ * Priority:
+ *   1. The single job with status === 'running' (the current in-flight one).
+ *   2. Otherwise the oldest 'queued' job by startedAt (ISO strings sort correctly).
+ *   3. Otherwise a 'report_pending' job whose mail send needs retrying.
+ *   4. Otherwise null.
+ *
+ * Serialization is enforced by never promoting a queued job to running while
+ * another is still in-flight — that is the caller's job (runBatch_ inside
+ * the lock).
+ */
+function pickNextJob(registry) {
+  if (!registry || !registry.length) return null;
+  var running = null;
+  var oldestQueued = null;
+  var oldestReportPending = null;
+  for (var i = 0; i < registry.length; i++) {
+    var j = registry[i];
+    if (!j) continue;
+    if (j.status === 'running') return j; // there is only ever one
+    if (j.status === 'queued') {
+      if (!oldestQueued || String(j.startedAt) < String(oldestQueued.startedAt)) {
+        oldestQueued = j;
+      }
+    } else if (j.status === 'report_pending') {
+      if (!oldestReportPending || String(j.startedAt) < String(oldestReportPending.startedAt)) {
+        oldestReportPending = j;
+      }
+    }
+  }
+  return running || oldestQueued || oldestReportPending || null;
+}
+
 // Node interop: expose to require() while remaining a valid GAS file.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -454,6 +504,8 @@ if (typeof module !== 'undefined' && module.exports) {
     dryRunToCsv: dryRunToCsv,
     logToCsv: logToCsv,
     joinPath: joinPath,
-    escapeHtml: escapeHtml
+    escapeHtml: escapeHtml,
+    pruneJobsRegistry: pruneJobsRegistry,
+    pickNextJob: pickNextJob
   };
 }
