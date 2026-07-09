@@ -208,7 +208,6 @@ function formatReportHtml(context) {
       '</div>',
       '<div style="border-top:5px solid ' + C.brand + ';background:' + C.heading + ';color:#fff;',
         'padding:12px 24px;font-family:' + fontDisplay + ';font-size:12px;">',
-        'Themed to Paper Tiger — Princeton ORFE.',
       '</div>',
     '</div>'
   ].join('');
