@@ -410,18 +410,148 @@ function dryRunToCsv(plan, skip) {
   return rows.join('\n');
 }
 
+/**
+ * HTML body for the "you now own these" email that the script sends to the
+ * new owner once a run completes successfully. Distinct from
+ * formatReportHtml (which goes to the initiator with the full audit trail)
+ * — this one is the out-of-band notification the initiator would otherwise
+ * have to send by hand.
+ *
+ * Only items that landed at the new owner's My Drive root (moveToRoot=true
+ * on the plan entry, preserved into the log entry by attemptTransfer_) are
+ * enumerated in the "items to look for" table — those are what the new
+ * owner will actually see when they open My Drive. Descendants pulled in
+ * by a recursive walk live inside their parent folder and don't need
+ * separate mention.
+ */
+function formatNewOwnerNotificationHtml(context) {
+  var log = context.log || [];
+  var initiator = escapeHtml(context.initiatorEmail || 'a colleague');
+  var completedAt = escapeHtml(context.completedAt || '');
+
+  var success = 0, folders = 0, files = 0;
+  var rootItems = [];
+  for (var i = 0; i < log.length; i++) {
+    var e = log[i];
+    if (e.status !== STATUS.SUCCESS) continue;
+    success++;
+    if (e.isFolder) folders++; else files++;
+    if (e.moveToRoot) rootItems.push(e);
+  }
+
+  var LIST_CAP = 100;
+  var shown = rootItems.slice(0, LIST_CAP);
+  var overflow = rootItems.length > LIST_CAP;
+
+  var C = {
+    ink: '#333333', heading: '#121212', brand: '#e77500', brandDk: '#C1560E',
+    brandBg: '#FFF7F2', neutral5: '#f7f7f7', n10: '#eeeeee', n60: '#717171'
+  };
+  var fontDisplay = "'sofia-pro','Source Sans 3','Helvetica Neue',Arial,sans-serif";
+  var fontBody    = "'abril-text','Source Serif 4',Georgia,'Times New Roman',serif";
+
+  function itemRow(it) {
+    var isFolder = !!it.isFolder;
+    var link = 'https://drive.google.com/open?id=' + encodeURIComponent(it.id);
+    return (
+      '<tr>' +
+        '<td style="padding:6px 10px;border:1px solid ' + C.n10 + ';">' + escapeHtml(isFolder ? 'Folder' : 'File') + '</td>' +
+        '<td style="padding:6px 10px;border:1px solid ' + C.n10 + ';">' + escapeHtml(it.name || '') + '</td>' +
+        '<td style="padding:6px 10px;border:1px solid ' + C.n10 + ';">' +
+          '<a href="' + escapeHtml(link) + '" style="color:' + C.brandDk + ';text-decoration:underline;">Open in Drive</a>' +
+        '</td>' +
+      '</tr>'
+    );
+  }
+
+  var rows;
+  if (shown.length === 0) {
+    rows = '<tr><td colspan="3" style="padding:8px;color:#666;">' +
+      'No new items landed at your My Drive root. Ownership transferred, but the transferred items were nested inside folders you already owned — they are wherever they were before, just with you as the owner now.' +
+      '</td></tr>';
+  } else {
+    var acc = '';
+    for (var j = 0; j < shown.length; j++) acc += itemRow(shown[j]);
+    rows = acc;
+  }
+
+  var overflowLine = overflow
+    ? '<p style="margin:12px 0 0;color:' + C.n60 + ';font-size:13px;font-family:' + fontDisplay + ';">' +
+        '… and ' + (rootItems.length - LIST_CAP) + ' more items at your My Drive root.' +
+      '</p>'
+    : '';
+
+  return [
+    '<div style="font-family:' + fontBody + ';color:' + C.ink + ';max-width:720px;">',
+
+      '<div style="background:' + C.heading + ';color:#fff;padding:20px 24px;">',
+        '<h2 style="margin:0;font-family:' + fontDisplay + ';font-weight:700;font-size:26px;',
+          'border-bottom:4px solid ' + C.brand + ';display:inline-block;padding-bottom:6px;">',
+          'You now own ' + success + ' item' + (success === 1 ? '' : 's'),
+        '</h2>',
+        '<p style="margin:12px 0 0;font-family:' + fontBody + ';color:#eeeeee;font-size:14px;">',
+          '<b style="color:#fff;">' + initiator + '</b> transferred ownership of ',
+          success + ' file' + (success === 1 ? '' : 's') + '/folder' + (success === 1 ? '' : 's') + ' to you.<br>',
+          'Completed at ' + completedAt + '.',
+        '</p>',
+      '</div>',
+
+      '<div style="padding:20px 24px;background:#fff;border:1px solid ' + C.n10 + ';border-top:none;">',
+        '<table style="border-collapse:collapse;margin:0 0 20px;">',
+          '<tr>',
+            metricCell('Total transferred', success, C.brandBg,  C.brandDk),
+            metricCell('Folders',           folders, C.neutral5, C.heading),
+            metricCell('Files',             files,   C.neutral5, C.heading),
+            metricCell('At your My Drive root', rootItems.length, C.neutral5, C.heading),
+          '</tr>',
+        '</table>',
+
+        '<h3 style="margin:0 0 8px 0;font-family:' + fontDisplay + ';font-weight:700;',
+          'color:' + C.heading + ';border-bottom:2px solid ' + C.heading + ';padding-bottom:4px;">',
+          'Items at the root of your My Drive',
+        '</h3>',
+        '<p style="margin:0 0 12px 0;font-family:' + fontDisplay + ';font-size:14px;color:' + C.n60 + ';">',
+          'These are the top-level items transferred to you. Descendants (files inside a transferred folder) are still inside their folder and were not moved separately.',
+        '</p>',
+        '<table style="border-collapse:collapse;min-width:100%;font-family:' + fontDisplay + ';font-size:14px;">',
+          '<thead><tr>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Kind</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Name</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Link</th>',
+          '</tr></thead>',
+          '<tbody>' + rows + '</tbody>',
+        '</table>',
+        overflowLine,
+
+        '<p style="margin:24px 0 0;font-family:' + fontDisplay + ';font-size:13px;color:' + C.n60 + ';">',
+          'If you have questions about these transfers, contact ' +
+          '<a href="mailto:' + initiator + '" style="color:' + C.brandDk + ';">' + initiator + '</a>.',
+        '</p>',
+      '</div>',
+
+      '<div style="border-top:5px solid ' + C.brand + ';background:' + C.heading + ';color:#fff;',
+        'padding:12px 24px;font-family:' + fontDisplay + ';font-size:12px;">',
+        'Themed to Paper Tiger — Princeton ORFE.',
+      '</div>',
+
+    '</div>'
+  ].join('');
+}
+
 /** Serialize log rows into RFC-4180-ish CSV suitable for attachment. */
 function logToCsv(log) {
-  var headers = ['timestamp', 'status', 'name', 'id', 'path', 'message'];
+  var headers = ['timestamp', 'status', 'name', 'id', 'path', 'url', 'message'];
   var rows = [headers.join(',')];
   for (var i = 0; i < log.length; i++) {
     var r = log[i];
+    var url = r.id ? ('https://drive.google.com/open?id=' + encodeURIComponent(r.id)) : '';
     rows.push([
       csvField(r.timestamp || ''),
       csvField(r.status || ''),
       csvField(r.name || ''),
       csvField(r.id || ''),
       csvField(r.path || ''),
+      csvField(url),
       csvField(r.message || '')
     ].join(','));
   }
@@ -523,6 +653,7 @@ if (typeof module !== 'undefined' && module.exports) {
     summarizeLog: summarizeLog,
     formatReportHtml: formatReportHtml,
     formatDryRunReportHtml: formatDryRunReportHtml,
+    formatNewOwnerNotificationHtml: formatNewOwnerNotificationHtml,
     dryRunToCsv: dryRunToCsv,
     logToCsv: logToCsv,
     joinPath: joinPath,

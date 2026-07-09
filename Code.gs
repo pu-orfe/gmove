@@ -589,6 +589,13 @@ function runBatch_() {
 
   // Completion path — mail first, prune only on success.
   var mailStatus = sendReport_(state);
+  if (mailStatus.sent) {
+    // Best-effort: also send a summary to the new owner so they know what
+    // just landed in their Drive. Not gating job cleanup on this — the
+    // initiator's report is the auditable record; the new-owner email is
+    // a courtesy notification.
+    sendNewOwnerReport_(state);
+  }
   withScriptLock_(function () {
     if (mailStatus.sent) {
       deleteJobState_(job.jobId);
@@ -640,11 +647,17 @@ function runBatch_() {
 function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
   var moveToRoot = !!item.moveToRoot;
+  // sendNotificationEmail=false — per-item mail is what triggers the
+  // "successfully shared but emails could not be sent" throttle when the
+  // same new owner is on the receiving end of a large batch. The script
+  // now sends ONE consolidated summary to the new owner from
+  // sendNewOwnerReport_ once the whole run finishes, so per-item mail is
+  // pure noise.
   var url = 'https://www.googleapis.com/drive/v3/files/' +
             encodeURIComponent(item.id) +
             '/permissions?transferOwnership=true' +
             '&moveToNewOwnersRoot=' + (moveToRoot ? 'true' : 'false') +
-            '&sendNotificationEmail=true';
+            '&sendNotificationEmail=false';
   try {
     var response = UrlFetchApp.fetch(url, {
       method: 'post',
@@ -661,6 +674,7 @@ function attemptTransfer_(item, newOwnerEmail) {
     if (code >= 200 && code < 300) {
       return {
         timestamp: ts, id: item.id, name: item.name, path: item.path,
+        isFolder: !!item.isFolder, moveToRoot: moveToRoot,
         status: STATUS.SUCCESS,
         message: 'Transferred to ' + newOwnerEmail +
           (moveToRoot ? ' (moved to their My Drive root).' : ' (kept in transferred subtree).')
@@ -856,6 +870,59 @@ function withScriptLock_(fn) {
 }
 
 // ---------- Reporting -------------------------------------------------------
+
+/**
+ * Send the new-owner summary email. One consolidated notification listing
+ * every item now owned by them, with a Drive link per item as a fallback
+ * so they can navigate to the items even if My Drive listings do not
+ * surface them right away. Best-effort — never throws; a failure is
+ * console.error'd and does not block the initiator's report or job
+ * pruning.
+ */
+function sendNewOwnerReport_(state) {
+  var newOwner = String(state.newOwnerEmail || '').trim();
+  if (!newOwner) return { sent: false, error: 'no new owner email on state' };
+
+  // Only successes — the new owner does not need to see failures or
+  // not-owned skips (those aren't their items).
+  var successes = [];
+  for (var i = 0; i < (state.log || []).length; i++) {
+    if (state.log[i].status === STATUS.SUCCESS) successes.push(state.log[i]);
+  }
+  if (successes.length === 0) {
+    console.info('gmove: new-owner report skipped — no successes to report.');
+    return { sent: false, error: 'no successes' };
+  }
+
+  var completedAt = new Date().toISOString();
+  var html = formatNewOwnerNotificationHtml({
+    initiatorEmail: state.initiatorEmail,
+    completedAt: completedAt,
+    log: successes
+  });
+  // Attach the full CSV of successes so the new owner has a durable
+  // fallback list of Drive links for every item, in case some do not
+  // surface in My Drive right away.
+  var csv = logToCsv(successes);
+  var attachment = Utilities.newBlob(csv, 'text/csv',
+    'drive-ownership-transferred-to-you-' + Date.now() + '.csv');
+  var subject = 'You now own ' + successes.length + ' item' +
+    (successes.length === 1 ? '' : 's') + ' — transferred by ' +
+    (state.initiatorEmail || 'a colleague');
+  try {
+    MailApp.sendEmail({
+      to: newOwner,
+      subject: subject,
+      htmlBody: html,
+      attachments: [attachment]
+    });
+    return { sent: true };
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    console.error('gmove: sendNewOwnerReport_ failed for ' + newOwner + ': ' + msg);
+    return { sent: false, error: msg };
+  }
+}
 
 /**
  * Format and send the completion report. Returns {sent, error?} so the

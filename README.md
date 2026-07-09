@@ -304,9 +304,22 @@ to tear a specific one down.
   Descendants pulled in by the walk keep their existing parent, so the
   subtree structure survives the transfer intact — a `Project-X/` folder
   moves as one thing to the new owner's My Drive, with all its files still
-  inside it. Notification email is left at Drive's default (`true`) — a
-  prior attempt at silent transfers triggered consent-required errors, and
-  the notification appears to be an implicit consent signal.
+  inside it.
+- **Silent transfers + one summary email to the new owner.** Per-item
+  notification email is suppressed (`sendNotificationEmail=false`) — Drive
+  throttles per-recipient at somewhere around 100 emails per short window,
+  and any large batch to the same new owner used to trip that limit and
+  return a misleading `400 Sorry, the items were successfully shared but
+  emails could not be sent...`. Instead, when the whole job completes and
+  the initiator's report email is sent successfully, `sendNewOwnerReport_`
+  sends ONE consolidated notification to the new owner: a
+  Paper-Tiger-styled HTML body summarizing counts and listing the items
+  that landed at their My Drive root, plus a CSV attachment listing every
+  transferred item with a direct `drive.google.com/open?id=<id>` link.
+  The CSV is the fallback so the new owner can navigate to items even if
+  they do not surface in My Drive right away. Best-effort — a mail
+  failure on this notification is `console.error`'d but does not block
+  job cleanup.
 - **Old owner loses their folder view.** Because top-level items move to
   the new owner's My Drive root, they disappear from the initiator's
   folder tree. The initiator retains editor access (Drive adds them as a
@@ -343,18 +356,14 @@ to tear a specific one down.
   status, the flag values sent, and the full Drive JSON response body.
   When a transfer fails, `clasp open-logs` gives you the exact reason
   Drive rejected it rather than a wrapped Apps Script exception.
-- **Notification-email throttle is not a real failure.** Drive limits how
-  many "You have been added as an owner" emails it will deliver to a
-  single recipient in a short window. When we cross that ceiling, the
-  API returns HTTP 400 with the message *"Sorry, the items were
-  successfully shared but emails could not be sent to <address>."* — but
-  the permission WAS written. `attemptTransfer_` matches that specific
-  message via `isDriveNotificationOnlyFailure()` (Logic.gs, tested) and
-  reclassifies the item as SUCCESS with a note in the message column,
-  and logs it to Stackdriver as `console.info` rather than
-  `console.error`. Nothing to do on the operator side — the transfer
-  happened; the new owner just missed the per-item notification for
-  those items.
+- **Notification-throttle detector is retained as a safety net.** Even
+  though `sendNotificationEmail=false` is now the default and the
+  throttle should never fire, `isDriveNotificationOnlyFailure()` still
+  matches Drive's *"Sorry, the items were successfully shared but emails
+  could not be sent..."* response. If Drive ever changes behavior and
+  starts firing notifications despite the flag, the transfer will still
+  be recorded as SUCCESS rather than a spurious FAILED. Logged as
+  `console.info`, not `console.error`, so the signal stays clean.
 - **Batching.** Every ~4.5 minutes (see `TIME_BUDGET_MS` in `Logic.gs`) the
   server checkpoints the current state to `ScriptProperties` under key
   `gmove.state.v1` and schedules a one-shot time-driven trigger that calls

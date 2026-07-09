@@ -195,22 +195,31 @@ test('formatReportHtml handles zero failures cleanly', () => {
   assert.match(html, /No failures recorded/);
 });
 
-test('logToCsv escapes commas, quotes and newlines and includes header row', () => {
+test('logToCsv escapes commas/quotes/newlines, headers include url, url is derived from id', () => {
   const csv = L.logToCsv([
     { timestamp: '2026-01-01T00:00:00Z', status: 'SUCCESS', name: 'ok, file', id: 'id1', path: 'r/ok, file', message: '' },
     { timestamp: '2026-01-01T00:00:01Z', status: 'FAILED',  name: 'bad "x"',   id: 'id2', path: 'r/bad',      message: 'line1\nline2' }
   ]);
-  // First line is always the header.
-  assert.ok(csv.startsWith('timestamp,status,name,id,path,message\n'));
-  assert.match(csv, /"ok, file"/);           // comma escaping
+  assert.ok(csv.startsWith('timestamp,status,name,id,path,url,message\n'));
+  assert.match(csv, /"ok, file"/);           // comma escaping in name
   assert.match(csv, /"r\/ok, file"/);        // comma escaping in path
   assert.match(csv, /"bad ""x"""/);          // quote doubling
   assert.match(csv, /"line1\nline2"/);       // literal newline preserved inside quoted field
+  // URLs are the drive.google.com/open?id=<id> shape and appear on every row with an id.
+  assert.match(csv, /https:\/\/drive\.google\.com\/open\?id=id1/);
+  assert.match(csv, /https:\/\/drive\.google\.com\/open\?id=id2/);
 });
 
 test('logToCsv handles empty log', () => {
   const csv = L.logToCsv([]);
-  assert.equal(csv, 'timestamp,status,name,id,path,message');
+  assert.equal(csv, 'timestamp,status,name,id,path,url,message');
+});
+
+test('logToCsv leaves url column empty when the entry has no id', () => {
+  const csv = L.logToCsv([{ status: 'INFO', name: 'note', message: 'orphan entry with no id' }]);
+  // The line is: ,INFO,note,,,,orphan entry with no id
+  // Two consecutive empties between path and message = the url slot.
+  assert.match(csv, /,INFO,note,,,,orphan entry with no id/);
 });
 
 test('formatDryRunReportHtml renders DRY RUN banner, both tables, escapes hostile input', () => {
@@ -292,6 +301,81 @@ test('pickNextJob returns oldest queued when no job is running', () => {
   const newer = { jobId: 'a', status: 'queued', startedAt: '2026-01-02T00:00:00Z' };
   const older = { jobId: 'b', status: 'queued', startedAt: '2026-01-01T00:00:00Z' };
   assert.equal(L.pickNextJob([newer, older]).jobId, 'b');
+});
+
+test('formatNewOwnerNotificationHtml lists only moveToRoot successes, links each to Drive', () => {
+  const html = L.formatNewOwnerNotificationHtml({
+    initiatorEmail: 'bino@princeton.edu',
+    completedAt: '2026-07-09T18:00:00Z',
+    log: [
+      // A recursive-folder root — appears in the "items at root" table
+      { status: L.STATUS.SUCCESS, isFolder: true,  moveToRoot: true,  id: 'idA', name: 'Project-X' },
+      // A file inside the transferred folder — counted but NOT listed at root
+      { status: L.STATUS.SUCCESS, isFolder: false, moveToRoot: false, id: 'idB', name: 'inner.txt' },
+      // An explicit file the user picked directly — root-level
+      { status: L.STATUS.SUCCESS, isFolder: false, moveToRoot: true,  id: 'idC', name: 'report.pdf' },
+      // A failure — must not enter counts
+      { status: L.STATUS.FAILED,  isFolder: false, moveToRoot: true,  id: 'idD', name: 'bad.pdf', message: 'nope' },
+      // A skipped-not-owned — must not enter counts
+      { status: L.STATUS.SKIPPED_NOT_OWNED, isFolder: false, moveToRoot: false, id: 'idE', name: 'other.pdf' }
+    ]
+  });
+
+  // Header count: 3 successes total.
+  assert.match(html, /You now own 3 items/);
+  // Initiator surfaced.
+  assert.match(html, /bino@princeton\.edu/);
+  // Metric block: 1 folder, 2 files, 2 root items.
+  assert.match(html, />Total transferred<\/div><div[^>]*>3</);
+  assert.match(html, />Folders<\/div><div[^>]*>1</);
+  assert.match(html, />Files<\/div><div[^>]*>2</);
+  assert.match(html, />At your My Drive root<\/div><div[^>]*>2</);
+  // Root items are linked to drive.google.com/open?id=<id>.
+  assert.match(html, /href="https:\/\/drive\.google\.com\/open\?id=idA"/);
+  assert.match(html, /href="https:\/\/drive\.google\.com\/open\?id=idC"/);
+  // Nested-descendant idB is NOT surfaced at the root — it lives inside idA.
+  assert.doesNotMatch(html, /open\?id=idB/);
+  // Failed and skipped items don't leak in.
+  assert.doesNotMatch(html, /open\?id=idD/);
+  assert.doesNotMatch(html, /open\?id=idE/);
+});
+
+test('formatNewOwnerNotificationHtml handles the "everything nested, nothing at root" case', () => {
+  // All transferred items were descendants of an already-owned folder →
+  // nothing gets moveToRoot=true, so the "items at root" table shows the
+  // explainer message instead of listing links.
+  const html = L.formatNewOwnerNotificationHtml({
+    initiatorEmail: 'x@y.z', completedAt: 't',
+    log: [
+      { status: L.STATUS.SUCCESS, isFolder: false, moveToRoot: false, id: 'a', name: 'file' }
+    ]
+  });
+  assert.match(html, /No new items landed at your My Drive root/);
+});
+
+test('formatNewOwnerNotificationHtml caps the listed root items at 100 with an overflow note', () => {
+  const many = [];
+  for (let i = 0; i < 130; i++) {
+    many.push({ status: L.STATUS.SUCCESS, isFolder: false, moveToRoot: true, id: 'x' + i, name: 'f' + i });
+  }
+  const html = L.formatNewOwnerNotificationHtml({
+    initiatorEmail: 'x@y.z', completedAt: 't', log: many
+  });
+  assert.match(html, /… and 30 more items at your My Drive root/);
+});
+
+test('formatNewOwnerNotificationHtml escapes hostile initiator and item names', () => {
+  const html = L.formatNewOwnerNotificationHtml({
+    initiatorEmail: '<script>bad</script>@x.com',
+    completedAt: 't',
+    log: [
+      { status: L.STATUS.SUCCESS, isFolder: true, moveToRoot: true, id: 'id1', name: '<img src=x onerror=alert(1)>' }
+    ]
+  });
+  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;@x\.com/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(html, /<script>bad<\/script>/);
+  assert.doesNotMatch(html, /<img src=x/);
 });
 
 test('isDriveNotificationOnlyFailure recognizes the Drive rate-limited notification response', () => {
