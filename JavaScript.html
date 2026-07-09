@@ -485,7 +485,15 @@
         renderPreview(preview);
         els.previewBtn.disabled = false;
         els.commitBtn.disabled = false;
-        setStatus('Preview ready. Nothing has been modified. Review below, then click Confirm to run.', 'ok');
+        var tail;
+        if (preview.emailedTo) {
+          tail = ' Report emailed to ' + preview.emailedTo + '.';
+        } else if (preview.emailError) {
+          tail = ' (Email failed: ' + preview.emailError + '.)';
+        } else {
+          tail = '';
+        }
+        setStatus('Preview ready. Nothing has been modified.' + tail + ' Review below, then click Confirm to run.', 'ok');
       })
       .withFailureHandler(function (err) {
         els.previewBtn.disabled = false;

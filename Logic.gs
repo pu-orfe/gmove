@@ -227,6 +227,180 @@ function metricCell(label, value, bg, fg) {
   );
 }
 
+/**
+ * Build the HTML body of the dry-run report email. Same visual language as
+ * the production-run report (formatReportHtml) but with a prominent DRY RUN
+ * banner and two "would" tables (would-transfer, would-skip) instead of
+ * success/failure. context = {targetFolderId, newOwnerEmail, summary, plan,
+ * skip, completedAt}.
+ */
+function formatDryRunReportHtml(context) {
+  var summary = context.summary || {};
+  var plan = context.plan || [];
+  var skip = context.skip || [];
+  var targetFolder = escapeHtml(context.targetFolderId || '');
+  var newOwner     = escapeHtml(context.newOwnerEmail  || '(not specified)');
+  var completedAt  = escapeHtml(context.completedAt    || '');
+
+  // Paper Tiger colors, inlined for email clients that ignore <style>.
+  var C = {
+    ink: '#333333', heading: '#121212', brand: '#e77500', brandDk: '#C1560E',
+    brandLt: '#FEECDE', brandBg: '#FFF7F2',
+    warn: '#c62828', warnBg: '#ffebee',
+    neutral5: '#f7f7f7', n10: '#eeeeee', n60: '#717171'
+  };
+  var fontDisplay = "'sofia-pro','Source Sans 3','Helvetica Neue',Arial,sans-serif";
+  var fontBody    = "'abril-text','Source Serif 4',Georgia,'Times New Roman',serif";
+
+  function planRows(items) {
+    if (items.length === 0) {
+      return '<tr><td colspan="3" style="padding:8px;color:#666;">Nothing selected in this bucket.</td></tr>';
+    }
+    var rows = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      rows +=
+        '<tr>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';">' + escapeHtml(it.isFolder ? 'folder' : 'file') + '</td>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';">' + escapeHtml(it.path || it.name) + '</td>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';font-family:monospace;font-size:12px;">' + escapeHtml(it.id) + '</td>' +
+        '</tr>';
+    }
+    return rows;
+  }
+
+  function skipRows(items) {
+    if (items.length === 0) {
+      return '<tr><td colspan="3" style="padding:8px;color:#666;">No non-owned items in this selection.</td></tr>';
+    }
+    var rows = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      rows +=
+        '<tr>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';">' + escapeHtml(it.path || it.name) + '</td>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';font-family:monospace;font-size:12px;">' + escapeHtml(it.id) + '</td>' +
+        '<td style="padding:6px;border:1px solid ' + C.n10 + ';">' + escapeHtml(it.message || '') + '</td>' +
+        '</tr>';
+    }
+    return rows;
+  }
+
+  var overCapBanner = '';
+  if (summary.overCap) {
+    overCapBanner =
+      '<div style="background:' + C.warnBg + ';border-left:4px solid ' + C.warn + ';padding:12px 16px;margin-top:12px;">' +
+        '<b style="color:' + C.warn + ';">Selection is over the ScriptProperties ceiling.</b> ' +
+        'This plan (~' + Math.round((summary.stateBytes || 0) / 1024) + ' KB) exceeds ~' +
+        Math.round((summary.capBytes || 0) / 1024) + ' KB. Committing as-is would fail — narrow the selection.' +
+      '</div>';
+  }
+
+  return [
+    '<div style="font-family:' + fontBody + ';color:' + C.ink + ';max-width:720px;">',
+
+      '<div style="background:' + C.heading + ';color:#fff;padding:20px 24px;">',
+        '<div style="display:inline-block;background:' + C.brand + ';color:#fff;font-family:' + fontDisplay + ';',
+          'font-weight:700;padding:4px 10px;letter-spacing:0.08em;text-transform:uppercase;font-size:12px;',
+          'margin-bottom:8px;">Dry Run — nothing was modified</div>',
+        '<h2 style="margin:0;font-family:' + fontDisplay + ';font-weight:700;font-size:26px;',
+          'border-bottom:4px solid ' + C.brand + ';display:inline-block;padding-bottom:6px;">',
+          'Drive Ownership Transfer — Preview',
+        '</h2>',
+        '<p style="margin:12px 0 0;font-family:' + fontBody + ';color:#eeeeee;font-size:14px;">',
+          'Root folder <code style="font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;">' + targetFolder + '</code>',
+          ' → intended new owner <b style="color:#fff;">' + newOwner + '</b>.<br>',
+          'Preview generated at ' + completedAt + '.',
+        '</p>',
+      '</div>',
+
+      '<div style="padding:20px 24px;background:#fff;border:1px solid ' + C.n10 + ';border-top:none;">',
+        overCapBanner,
+
+        '<table style="border-collapse:collapse;margin:12px 0 20px;">',
+          '<tr>',
+            metricCell('Would transfer', summary.willTransfer || 0, C.brandBg,  C.brandDk),
+            metricCell('Folders',        summary.folders      || 0, C.neutral5, C.heading),
+            metricCell('Files',          summary.files        || 0, C.neutral5, C.heading),
+            metricCell('Would skip',     summary.willSkip     || 0, C.neutral5, C.n60),
+            metricCell('State size',     Math.round((summary.stateBytes || 0) / 1024) + ' KB',
+                                         (summary.overCap ? C.warnBg : C.neutral5),
+                                         (summary.overCap ? C.warn : C.heading)),
+          '</tr>',
+        '</table>',
+
+        '<h3 style="margin:16px 0 8px 0;font-family:' + fontDisplay + ';font-weight:700;',
+          'color:' + C.heading + ';border-bottom:2px solid ' + C.heading + ';padding-bottom:4px;">',
+          'Would transfer (' + plan.length + ')',
+        '</h3>',
+        '<table style="border-collapse:collapse;min-width:100%;font-family:' + fontDisplay + ';font-size:14px;">',
+          '<thead><tr>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Kind</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Path</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">ID</th>',
+          '</tr></thead>',
+          '<tbody>' + planRows(plan) + '</tbody>',
+        '</table>',
+
+        '<h3 style="margin:20px 0 8px 0;font-family:' + fontDisplay + ';font-weight:700;',
+          'color:' + C.heading + ';border-bottom:2px solid ' + C.heading + ';padding-bottom:4px;">',
+          'Would skip — not owned (' + skip.length + ')',
+        '</h3>',
+        '<table style="border-collapse:collapse;min-width:100%;font-family:' + fontDisplay + ';font-size:14px;">',
+          '<thead><tr>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Path</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">ID</th>',
+            '<th style="padding:8px;border-bottom:2px solid ' + C.brand + ';background:' + C.neutral5 + ';text-align:left;">Reason</th>',
+          '</tr></thead>',
+          '<tbody>' + skipRows(skip) + '</tbody>',
+        '</table>',
+
+        '<p style="margin:20px 0 0;color:' + C.n60 + ';font-size:12px;font-family:' + fontDisplay + ';">',
+          'Full preview attached as CSV. This report was generated by the ',
+          '<b>Preview transfer (dry run)</b> button — no Drive ownership was changed. ',
+          'To execute this plan, return to the web app and click <b>Confirm &amp; Transfer Ownership</b>.',
+        '</p>',
+      '</div>',
+
+      '<div style="border-top:5px solid ' + C.brand + ';background:' + C.heading + ';color:#fff;',
+        'padding:12px 24px;font-family:' + fontDisplay + ';font-size:12px;">',
+        'Themed to Paper Tiger — Princeton ORFE.',
+      '</div>',
+
+    '</div>'
+  ].join('');
+}
+
+/** CSV audit of a dry-run: every planned item and every skipped item. */
+function dryRunToCsv(plan, skip) {
+  var headers = ['bucket', 'kind', 'name', 'id', 'path', 'owner_or_reason'];
+  var rows = [headers.join(',')];
+  var i, r;
+  for (i = 0; i < plan.length; i++) {
+    r = plan[i];
+    rows.push([
+      csvField('WOULD_TRANSFER'),
+      csvField(r.isFolder ? 'folder' : 'file'),
+      csvField(r.name || ''),
+      csvField(r.id   || ''),
+      csvField(r.path || ''),
+      csvField(r.owner || '')
+    ].join(','));
+  }
+  for (i = 0; i < skip.length; i++) {
+    r = skip[i];
+    rows.push([
+      csvField(r.status || 'SKIPPED'),
+      csvField(''),
+      csvField(r.name || ''),
+      csvField(r.id   || ''),
+      csvField(r.path || ''),
+      csvField(r.message || '')
+    ].join(','));
+  }
+  return rows.join('\n');
+}
+
 /** Serialize log rows into RFC-4180-ish CSV suitable for attachment. */
 function logToCsv(log) {
   var headers = ['timestamp', 'status', 'name', 'id', 'path', 'message'];
@@ -267,6 +441,8 @@ if (typeof module !== 'undefined' && module.exports) {
     shouldCheckpoint: shouldCheckpoint,
     summarizeLog: summarizeLog,
     formatReportHtml: formatReportHtml,
+    formatDryRunReportHtml: formatDryRunReportHtml,
+    dryRunToCsv: dryRunToCsv,
     logToCsv: logToCsv,
     joinPath: joinPath,
     escapeHtml: escapeHtml

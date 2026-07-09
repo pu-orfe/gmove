@@ -187,3 +187,53 @@ test('logToCsv handles empty log', () => {
   const csv = L.logToCsv([]);
   assert.equal(csv, 'timestamp,status,name,id,path,message');
 });
+
+test('formatDryRunReportHtml renders DRY RUN banner, both tables, escapes hostile input', () => {
+  const html = L.formatDryRunReportHtml({
+    targetFolderId: 'FOLDER<X>',
+    newOwnerEmail: 'a@b.c',
+    completedAt: '2026-07-09T00:00:00Z',
+    summary: { willTransfer: 2, willSkip: 1, folders: 1, files: 1, stateBytes: 1024, overCap: false, capBytes: 400000 },
+    plan: [
+      { id: 'idA', name: 'A/', path: 'root/A/', isFolder: true,  owner: 'me@x.com' },
+      { id: 'idB', name: 'b.txt', path: 'root/A/<b>.txt', isFolder: false, owner: 'me@x.com' }
+    ],
+    skip: [
+      { id: 'idC', name: 'c.txt', path: 'root/A/c.txt', status: L.STATUS.SKIPPED_NOT_OWNED, message: 'Owned by <hacker>@x.com' }
+    ]
+  });
+  assert.match(html, /Dry Run — nothing was modified/);
+  assert.match(html, /Would transfer \(2\)/);
+  assert.match(html, /Would skip — not owned \(1\)/);
+  assert.match(html, /FOLDER&lt;X&gt;/);
+  assert.match(html, /root\/A\/&lt;b&gt;\.txt/);
+  assert.match(html, /Owned by &lt;hacker&gt;@x\.com/);
+  assert.doesNotMatch(html, /<hacker>/);
+});
+
+test('formatDryRunReportHtml surfaces over-cap warning when plan exceeds ScriptProperties ceiling', () => {
+  const html = L.formatDryRunReportHtml({
+    targetFolderId: 'x', newOwnerEmail: 'a@b.c', completedAt: 't',
+    summary: { willTransfer: 5000, willSkip: 0, folders: 100, files: 4900, stateBytes: 900000, overCap: true, capBytes: 400000 },
+    plan: [], skip: []
+  });
+  assert.match(html, /over the ScriptProperties ceiling/i);
+  assert.match(html, /~879 KB/);   // 900000/1024 = 878.9 → rounds to 879
+  assert.match(html, /~391 KB/);   // 400000/1024 = 390.6 → rounds to 391
+});
+
+test('dryRunToCsv emits WOULD_TRANSFER and SKIPPED buckets with headers, escapes commas', () => {
+  const csv = L.dryRunToCsv(
+    [{ id: 'i1', name: 'ok, file', path: 'r/ok, file', isFolder: false, owner: 'me@x.com' }],
+    [{ id: 'i2', name: 'skip', path: 'r/skip', status: L.STATUS.SKIPPED_NOT_OWNED, message: 'Owned by bob' }]
+  );
+  const lines = csv.split('\n');
+  assert.equal(lines[0], 'bucket,kind,name,id,path,owner_or_reason');
+  assert.match(lines[1], /^WOULD_TRANSFER,file,"ok, file",i1,"r\/ok, file",me@x\.com$/);
+  assert.match(lines[2], /^SKIPPED \(NOT OWNED\),,skip,i2,r\/skip,Owned by bob$/);
+});
+
+test('dryRunToCsv handles empty inputs', () => {
+  const csv = L.dryRunToCsv([], []);
+  assert.equal(csv, 'bucket,kind,name,id,path,owner_or_reason');
+});

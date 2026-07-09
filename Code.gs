@@ -244,6 +244,29 @@ function previewTransfer(payload) {
     if (merged.plan[i].isFolder) folders++; else files++;
   }
 
+  var summary = {
+    willTransfer: merged.plan.length,
+    willSkip:     merged.preLogs.length,
+    folders:      folders,
+    files:        files,
+    stateBytes:   stateBytes,
+    overCap:      overCap,
+    capBytes:     MAX_STATE_BYTES
+  };
+
+  // Email the full report to the initiator. We always send — the user asked
+  // for a persistent record of every dry run, and the full plan + skip list
+  // is far too large for a browser dialog. The client-side card is a fast
+  // interactive view; the email is the auditable copy.
+  var emailStatus = emailDryRunReport_({
+    initiatorEmail: built.activeUser,
+    targetFolderId: (payload && payload.targetFolderId) || '',
+    newOwnerEmail:  String((payload && payload.newOwnerEmail) || '').trim(),
+    summary:        summary,
+    plan:           merged.plan,
+    skip:           merged.preLogs
+  });
+
   // Cap the payload we send back to the client — a 5000-item plan does not
   // need to round-trip in full for a preview. Summary counts always reflect
   // the real totals.
@@ -252,21 +275,51 @@ function previewTransfer(payload) {
   var skipPreview = merged.preLogs.slice(0, PREVIEW_CAP);
 
   return {
-    summary: {
-      willTransfer: merged.plan.length,
-      willSkip:     merged.preLogs.length,
-      folders:      folders,
-      files:        files,
-      stateBytes:   stateBytes,
-      overCap:      overCap,
-      capBytes:     MAX_STATE_BYTES
-    },
+    summary:         summary,
     plan:            planPreview,
     planTruncated:   merged.plan.length > PREVIEW_CAP,
     skip:            skipPreview,
     skipTruncated:   merged.preLogs.length > PREVIEW_CAP,
-    previewCap:      PREVIEW_CAP
+    previewCap:      PREVIEW_CAP,
+    emailedTo:       emailStatus.sent ? built.activeUser : null,
+    emailError:      emailStatus.error || null
   };
+}
+
+/**
+ * Send the dry-run report email. Returns {sent: bool, error: string?} so the
+ * client can surface a specific message if MailApp bounces (typically a
+ * daily-quota trip).
+ */
+function emailDryRunReport_(context) {
+  var completedAt = new Date().toISOString();
+  var html = formatDryRunReportHtml({
+    targetFolderId: context.targetFolderId,
+    newOwnerEmail:  context.newOwnerEmail,
+    summary:        context.summary,
+    plan:           context.plan,
+    skip:           context.skip,
+    completedAt:    completedAt
+  });
+  var csv = dryRunToCsv(context.plan, context.skip);
+  var subject = '[DRY RUN] Drive Ownership Transfer — ' +
+    context.summary.willTransfer + ' would transfer, ' +
+    context.summary.willSkip + ' would skip';
+  var attachment = Utilities.newBlob(csv, 'text/csv',
+    'drive-transfer-dryrun-' + Date.now() + '.csv');
+  try {
+    MailApp.sendEmail({
+      to: context.initiatorEmail,
+      subject: subject,
+      htmlBody: html,
+      attachments: [attachment]
+    });
+    return { sent: true };
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    console.error('MailApp.sendEmail (dry run) failed: ' + msg);
+    return { sent: false, error: msg };
+  }
 }
 
 function commitTransfer(payload) {

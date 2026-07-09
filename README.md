@@ -273,6 +273,14 @@ to tear a specific one down.
   a stale plan can never be confused for the current one. Preview is
   optional — you can still commit directly — but it's the explicit
   Phase-1-dry-run affordance the original spec called for.
+- **Dry-run report emailed.** Every preview also emails a report to the
+  initiator: the same summary metrics, the full would-transfer and
+  would-skip tables (not truncated at 500 like the browser card is), and
+  a CSV audit attached. Subject line is prefixed `[DRY RUN]` so filters
+  can sort it away from the production-run report. If MailApp bounces
+  (typically a daily-quota trip), the client status line calls out the
+  error but the preview card still renders — the RPC's real product is
+  the summary, the email is a persistent copy.
 - **"Folder → everything inside" invariant.** Picking a folder in the tree
   transfers every transferable file and subfolder inside it. Descendants
   visibly lock (checkbox forced on and disabled) so you cannot deselect a
