@@ -11,7 +11,7 @@
       <div class="pt-container">
         <h1>Drive Ownership Transfer</h1>
         <p>
-          Browse the drive, select folders and files, and transfer ownership in bulk.
+          Browse Google Drive, select folders and files, and transfer ownership in bulk.
         </p>
         <p class="pt-signed-in">
           Signed in as <code><?!= activeUserEmail ?></code>
@@ -19,96 +19,120 @@
       </div>
     </header>
 
-    <main class="pt-container" style="padding-top:var(--space-8);padding-bottom:var(--space-16);">
-      <section class="pt-surface pt-outline-light" id="queue-card" style="margin-bottom:var(--space-8);">
-        <div class="pt-block-heading">
-          <h2>0 · Job queue</h2>
-          <button class="pt-btn pt-btn--outline" id="refreshQueueBtn" type="button">Refresh</button>
-        </div>
-        <p class="pt-field__hint" style="margin-top:0;">
-          One job runs at a time. Any newer commit sits queued until the current job finishes.
-          Completed jobs disappear from this queue immediately — the email report is the record.
-        </p>
-        <div id="queue-body" class="pt-queue-body">
-          <p class="pt-queue-empty">No jobs running.</p>
-        </div>
-      </section>
-
-      <section class="pt-surface pt-outline-light" id="inputs-card">
-        <div class="pt-block-heading">
-          <h2>1 · Configure</h2>
-        </div>
-        <div class="pt-row">
-          <label class="pt-field">
-            <span class="pt-field__label">Target folder ID</span>
-            <input id="targetFolderId" class="pt-input" type="text" placeholder="1AbC-…" autocomplete="off">
-            <span class="pt-field__hint">
-              Paste the ID from a Drive URL after <code>/folders/</code>, or click
-              <strong>Browse My Drive</strong> to start from your root. Shared drives
-              still need a folder ID pasted in.
-            </span>
-          </label>
-          <label class="pt-field">
-            <span class="pt-field__label">New owner email</span>
-            <input id="newOwnerEmail" class="pt-input" type="email" placeholder="alice@princeton.edu" autocomplete="off">
-            <span class="pt-field__hint">Must be inside your organization.</span>
-          </label>
-        </div>
-        <div class="pt-row pt-row--actions pt-cluster">
-          <button class="pt-btn pt-btn--primary" id="loadBtn" type="button">Load folder</button>
-          <button class="pt-btn pt-btn--outline" id="loadMyDriveBtn" type="button">Browse My Drive</button>
-          <span class="pt-actions-sep" aria-hidden="true">·</span>
-          <button class="pt-btn pt-btn--outline" id="previewBtn" type="button" disabled>Preview transfer (dry run)</button>
-          <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
-        </div>
-        <p class="pt-status" id="status" role="status" aria-live="polite"></p>
-      </section>
-
-      <section class="pt-surface pt-outline-light" id="tree-card" hidden style="margin-top:var(--space-8);">
-        <div class="pt-block-heading">
-          <h2>2 · Browse &amp; select</h2>
-          <div class="pt-cluster">
-            <span class="pt-pill pt-pill--ok">Will transfer</span>
-            <span class="pt-pill pt-pill--locked">Locked (ancestor selected)</span>
-            <span class="pt-pill pt-pill--skip">Not owned — will skip</span>
+    <main class="pt-app-shell pt-container">
+      <div class="pt-app-shell__main">
+        <section class="pt-surface pt-outline-light" id="inputs-card">
+          <div class="pt-block-heading">
+            <h2>Start a transfer</h2>
           </div>
-        </div>
+          <div class="pt-row">
+            <label class="pt-field">
+              <span class="pt-field__label">New owner email</span>
+              <input id="newOwnerEmail" class="pt-input" type="email" placeholder="" autocomplete="off">
+              <span class="pt-field__hint">Must be princeton.edu.</span>
+            </label>
+          </div>
+          <div class="pt-row pt-row--actions pt-cluster">
+            <button class="pt-btn pt-btn--primary" id="loadMyDriveBtn" type="button">Browse My Drive</button>
+            <button class="pt-btn pt-btn--outline" id="previewBtn" type="button" disabled>Preview</button>
+            <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
+          </div>
+          <details class="pt-advanced" id="advanced-load">
+            <summary>Advanced: open a folder by ID</summary>
+            <div class="pt-advanced__body">
+              <div class="pt-row">
+                <label class="pt-field">
+                  <span class="pt-field__label">Target folder ID</span>
+                  <input id="targetFolderId" class="pt-input" type="text" placeholder="1AbC-…" autocomplete="off">
+                  <span class="pt-field__hint">
+                    Paste the ID from a Drive URL after <code>/folders/</code>. Shared drives
+                    still need a folder ID pasted in.
+                  </span>
+                </label>
+              </div>
+              <div class="pt-row pt-row--actions">
+                <button class="pt-btn pt-btn--outline" id="loadBtn" type="button">Load Folder</button>
+              </div>
+            </div>
+          </details>
+          <p class="pt-status" id="status" role="status" aria-live="polite"></p>
+        </section>
 
-        <p class="pt-hint">
-          <strong>Picking a folder transfers everything inside it.</strong>
-          Once a folder is checked, its children lock — you cannot deselect a single file
-          or subfolder inside a selected folder. Drive requires per-item ownership
-          transfers; this UI enforces "all or nothing" for a folder to prevent orphaned
-          contents.
-        </p>
+        <section class="pt-surface pt-outline-light" id="tree-card" hidden style="margin-top:var(--space-8);">
+          <div class="pt-block-heading">
+            <h2>Browse &amp; select</h2>
+            <div class="pt-cluster">
+              <span class="pt-pill pt-pill--ok">Will transfer</span>
+              <span class="pt-pill pt-pill--locked">Locked (ancestor selected)</span>
+              <span class="pt-pill pt-pill--skip">Not owned — will skip</span>
+            </div>
+          </div>
 
-        <div class="pt-toolbar pt-cluster">
-          <button class="pt-btn pt-btn--outline" id="expandAllBtn" type="button">Expand all in view</button>
-          <button class="pt-btn pt-btn--outline" id="collapseAllBtn" type="button">Collapse all</button>
-          <button class="pt-btn pt-btn--outline" id="selectAllBtn" type="button">Select all in view</button>
-          <button class="pt-btn pt-btn--outline" id="clearAllBtn" type="button">Clear selection</button>
-        </div>
+          <p class="pt-hint">
+            <strong>Picking a folder transfers everything inside it.</strong>
+            Once a folder is checked, its children lock — you cannot deselect a single file
+            or subfolder inside a selected folder. Drive requires per-item ownership
+            transfers; this UI enforces "all or nothing" for a folder to prevent orphaned
+            contents.
+          </p>
 
-        <div id="counters" class="pt-counters"></div>
-        <div id="tree" class="pt-tree" role="tree" aria-label="Drive tree"></div>
-      </section>
+          <div class="pt-toolbar pt-cluster">
+            <button class="pt-btn pt-btn--outline" id="expandAllBtn" type="button">Expand all in view</button>
+            <button class="pt-btn pt-btn--outline" id="collapseAllBtn" type="button">Collapse all</button>
+            <button class="pt-btn pt-btn--outline" id="selectAllBtn" type="button">Select all in view</button>
+            <button class="pt-btn pt-btn--outline" id="clearAllBtn" type="button">Clear selection</button>
+          </div>
 
-      <section class="pt-surface pt-outline-light" id="preview-card" hidden style="margin-top:var(--space-8);">
-        <div class="pt-block-heading">
-          <h2>3 · Preview (dry run)</h2>
-          <button class="pt-btn pt-btn--outline" id="closePreviewBtn" type="button">Dismiss</button>
-        </div>
-        <div id="preview-summary" class="pt-preview-summary"></div>
-        <details class="pt-preview-details" id="preview-plan-details">
-          <summary>Items that WILL transfer</summary>
-          <ul class="pt-preview-list" id="preview-plan-list"></ul>
-        </details>
-        <details class="pt-preview-details" id="preview-skip-details">
-          <summary>Items that will be SKIPPED (not owned by you)</summary>
-          <ul class="pt-preview-list" id="preview-skip-list"></ul>
-        </details>
-      </section>
+          <div id="counters" class="pt-counters"></div>
+          <div id="tree" class="pt-tree" role="tree" aria-label="Drive tree"></div>
+        </section>
+
+        <section class="pt-surface pt-outline-light" id="preview-card" hidden style="margin-top:var(--space-8);">
+          <div class="pt-block-heading">
+            <h2>Preview</h2>
+            <button class="pt-btn pt-btn--outline" id="closePreviewBtn" type="button">Dismiss</button>
+          </div>
+          <div id="preview-summary" class="pt-preview-summary"></div>
+          <details class="pt-preview-details" id="preview-plan-details">
+            <summary>Items that WILL transfer</summary>
+            <ul class="pt-preview-list" id="preview-plan-list"></ul>
+          </details>
+          <details class="pt-preview-details" id="preview-skip-details">
+            <summary>Items that will be SKIPPED (not owned by you)</summary>
+            <ul class="pt-preview-list" id="preview-skip-list"></ul>
+          </details>
+        </section>
+      </div>
+
+      <aside class="pt-app-shell__sidebar">
+        <section class="pt-surface pt-outline-light" id="queue-card">
+          <div class="pt-block-heading">
+            <h2>In-progress Transfers</h2>
+            <button class="pt-btn pt-btn--outline" id="refreshQueueBtn" type="button">Refresh</button>
+          </div>
+          <p class="pt-field__hint" style="margin-top:0;">
+            One transfer runs at a time. Newer requests wait here until the current run finishes.
+            Completed transfers disappear once the email report is sent.
+          </p>
+          <div id="queue-body" class="pt-queue-body">
+            <p class="pt-queue-empty">No transfers running.</p>
+          </div>
+        </section>
+      </aside>
     </main>
+
+    <div class="pt-modal-backdrop" id="modalBackdrop" hidden>
+      <div class="pt-modal pt-surface pt-outline-light" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="pt-block-heading pt-modal__heading">
+          <h2 id="modalTitle">Confirm action</h2>
+        </div>
+        <div class="pt-modal__body" id="modalBody"></div>
+        <div class="pt-modal__actions pt-cluster">
+          <button class="pt-btn pt-btn--outline" id="modalCancelBtn" type="button">Cancel</button>
+          <button class="pt-btn pt-btn--secondary" id="modalConfirmBtn" type="button">Continue</button>
+        </div>
+      </div>
+    </div>
 
     <?!= include('JavaScript'); ?>
   </body>

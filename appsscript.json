@@ -6,5 +6,8 @@
   "webapp": {
     "executeAs": "USER_ACCESSING",
     "access": "DOMAIN"
+  },
+  "executionApi": {
+    "access": "DOMAIN"
   }
 }

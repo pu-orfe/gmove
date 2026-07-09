@@ -4,6 +4,7 @@
 
   var els = {
     targetFolderId:  document.getElementById('targetFolderId'),
+    advancedLoad:    document.getElementById('advanced-load'),
     newOwnerEmail:   document.getElementById('newOwnerEmail'),
     loadBtn:         document.getElementById('loadBtn'),
     loadMyDriveBtn:  document.getElementById('loadMyDriveBtn'),
@@ -25,7 +26,12 @@
     previewSkipList: document.getElementById('preview-skip-list'),
     previewPlanDetails: document.getElementById('preview-plan-details'),
     previewSkipDetails: document.getElementById('preview-skip-details'),
-    closePreviewBtn: document.getElementById('closePreviewBtn')
+    closePreviewBtn: document.getElementById('closePreviewBtn'),
+    modalBackdrop:   document.getElementById('modalBackdrop'),
+    modalTitle:      document.getElementById('modalTitle'),
+    modalBody:       document.getElementById('modalBody'),
+    modalCancelBtn:  document.getElementById('modalCancelBtn'),
+    modalConfirmBtn: document.getElementById('modalConfirmBtn')
   };
 
   // -------------------------------------------------------------------------
@@ -80,6 +86,20 @@
   var lastAutoNudgeAt = 0;
   var AUTO_NUDGE_STALE_MS   = 90 * 1000;   // consider a job stalled after 90s of no update
   var AUTO_NUDGE_COOLDOWN   = 60 * 1000;   // don't fire another nudge within 60s of the last
+  var modalState = null;
+  var lastFocusedEl = null;
+
+  els.modalCancelBtn.addEventListener('click', function () { closeModalDialog(false); });
+  els.modalConfirmBtn.addEventListener('click', function () { closeModalDialog(true); });
+  els.modalBackdrop.addEventListener('click', function (evt) {
+    if (evt.target !== els.modalBackdrop || !modalState) return;
+    closeModalDialog(modalState.mode === 'alert');
+  });
+  document.addEventListener('keydown', function (evt) {
+    if (evt.key !== 'Escape' || !modalState) return;
+    evt.preventDefault();
+    closeModalDialog(modalState.mode === 'alert');
+  });
 
   function scheduleQueuePoll() {
     if (queuePollTimer) return;
@@ -113,34 +133,18 @@
     if (!jobs || jobs.length === 0) {
       var empty = document.createElement('p');
       empty.className = 'pt-queue-empty';
-      empty.textContent = 'No jobs running.';
+      empty.textContent = 'No transfers running.';
       els.queueBody.appendChild(empty);
       stopQueuePoll();
       return;
     }
     var me = lastQueueEmail || (state && state.activeUserEmail) || '';
-    var table = document.createElement('table');
-    table.className = 'pt-queue-table';
-    var thead = document.createElement('thead');
-    thead.innerHTML =
-      '<tr>' +
-        '<th>Initiator</th>' +
-        '<th>New owner</th>' +
-        '<th>Folder</th>' +
-        '<th>Progress</th>' +
-        '<th>Started</th>' +
-        '<th>Status</th>' +
-        '<th></th>' +
-      '</tr>';
-    table.appendChild(thead);
-    var tbody = document.createElement('tbody');
+    var list = document.createElement('div');
+    list.className = 'pt-queue-list';
     for (var i = 0; i < jobs.length; i++) {
-      var pair = renderQueueRow(jobs[i], me);
-      tbody.appendChild(pair.mainRow);
-      if (pair.errorRow) tbody.appendChild(pair.errorRow);
+      list.appendChild(renderQueueCard(jobs[i], me));
     }
-    table.appendChild(tbody);
-    els.queueBody.appendChild(table);
+    els.queueBody.appendChild(list);
     scheduleQueuePoll();
     maybeAutoNudge(jobs);
   }
@@ -176,56 +180,56 @@
       .nudgeResume();
   }
 
-  function renderQueueRow(job, me) {
-    var tr = document.createElement('tr');
+  function renderQueueCard(job, me) {
+    var card = document.createElement('article');
+    card.className = 'pt-queue-card';
     if (job.initiator && me && String(job.initiator).toLowerCase() === String(me).toLowerCase()) {
-      tr.className = 'pt-queue-row--mine';
+      card.classList.add('pt-queue-card--mine');
     }
-    // Mark a running job as stalled when its last-activity timestamp is
-    // older than the auto-nudge threshold — same criterion maybeAutoNudge
-    // uses, so the visual state and the client action stay in sync.
     if (job.status === 'running') {
       var lastAt = job.checkpointedAt || job.startedAt;
       if (lastAt && (Date.now() - new Date(lastAt).getTime()) > AUTO_NUDGE_STALE_MS) {
-        tr.classList.add('pt-queue-row--stalled');
+        card.classList.add('pt-queue-card--stalled');
       }
     }
-    tr.appendChild(cell(job.initiator || '—'));
-    tr.appendChild(cell(job.newOwnerEmail || '—'));
-    var folderCell = cell((job.targetFolderId || '').slice(-8) || '—');
-    folderCell.className = 'pt-queue__folder';
-    folderCell.title = job.targetFolderId || '';
-    tr.appendChild(folderCell);
-    tr.appendChild(progressCell(job.processed || 0, job.total || 0));
-    tr.appendChild(cell(shortTime(job.startedAt)));
-    tr.appendChild(statusPillCell(job.status));
-    tr.appendChild(actionsCell(job));
 
-    // If runBatch_ threw for this job on a previous invocation, render the
-    // captured message under the main row so it's plainly visible.
-    var errorRow = null;
+    var header = document.createElement('div');
+    header.className = 'pt-queue-card__header';
+    var title = document.createElement('div');
+    title.className = 'pt-queue-card__title';
+    title.textContent = job.newOwnerEmail || 'Transfer';
+    header.appendChild(title);
+    header.appendChild(statusPill(job.status));
+    card.appendChild(header);
+
+    var meta = document.createElement('dl');
+    meta.className = 'pt-queue-card__meta';
+    appendQueueMeta(meta, 'Initiator', job.initiator || '—');
+    appendQueueMeta(meta, 'Folder ID', (job.targetFolderId || '').slice(-8) || '—', job.targetFolderId || '');
+    appendQueueMeta(meta, 'Started', shortTime(job.startedAt));
+    card.appendChild(meta);
+
+    var progress = document.createElement('div');
+    progress.className = 'pt-queue-card__progress';
+    progress.appendChild(progressBar(job.processed || 0, job.total || 0));
+    card.appendChild(progress);
+
+    card.appendChild(actionsBlock(job));
+
     if (job.lastError) {
-      errorRow = document.createElement('tr');
-      errorRow.className = 'pt-queue-row--error';
-      var td = document.createElement('td');
-      td.setAttribute('colspan', '7');
+      var errorBox = document.createElement('div');
+      errorBox.className = 'pt-queue-card__error';
       var errAt = job.lastErrorAt ? ' at ' + shortTime(job.lastErrorAt) : '';
-      td.innerHTML = '<strong>Last error' + errAt + ':</strong> ';
-      td.appendChild(document.createTextNode(job.lastError));
-      errorRow.appendChild(td);
+      errorBox.innerHTML = '<strong>Last error' + errAt + ':</strong> ';
+      errorBox.appendChild(document.createTextNode(job.lastError));
+      card.appendChild(errorBox);
     }
-    return { mainRow: tr, errorRow: errorRow };
+    return card;
   }
 
-  function actionsCell(job) {
-    var td = document.createElement('td');
-    td.className = 'pt-queue__actions';
-
-    // Kick — force runBatch_ NOW instead of waiting for the trigger scheduler
-    // or the 90-second auto-nudge threshold. Enabled for jobs that have work
-    // to do (running) or a mail retry pending (report_pending). Disabled for
-    // queued jobs because they'd just skip the queue order and confuse
-    // people; the auto-nudge from the running job's completion handles them.
+  function actionsBlock(job) {
+    var wrap = document.createElement('div');
+    wrap.className = 'pt-queue-card__actions';
     var canKick = (job.status === 'running' || job.status === 'report_pending');
     var kickBtn = document.createElement('button');
     kickBtn.type = 'button';
@@ -242,12 +246,11 @@
     cancelBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
     cancelBtn.textContent = 'Cancel';
     cancelBtn.title = 'Drop this job from the queue. Items already transferred stay transferred.';
-    cancelBtn.style.marginLeft = 'var(--space-2)';
     cancelBtn.addEventListener('click', function () { cancelJob(job, cancelBtn); });
 
-    td.appendChild(kickBtn);
-    td.appendChild(cancelBtn);
-    return td;
+    wrap.appendChild(kickBtn);
+    wrap.appendChild(cancelBtn);
+    return wrap;
   }
 
   function kickJob(job, btn) {
@@ -279,6 +282,7 @@
         btn.textContent = originalLabel;
         btn.disabled = false;
         setStatus('Kick failed: ' + errMsg(err), 'error');
+        showAlertDialog('Could not kick transfer', errMsg(err));
         // Even on failure, refresh — the server may have written a lastError
         // to the meta which we want visible.
         fetchQueue(true);
@@ -289,43 +293,55 @@
   function cancelJob(job, btn) {
     var done = job.processed || 0;
     var total = job.total || 0;
-    var msg = 'Cancel this job?\n\n' +
-      'Initiator: ' + (job.initiator || '—') + '\n' +
-      'New owner: ' + (job.newOwnerEmail || '—') + '\n' +
-      'Status: ' + (job.status || '—') + '\n' +
-      'Progress at cancel: ' + done + '/' + total + '\n\n' +
-      'The ' + done + ' item(s) already transferred will REMAIN transferred (Drive does not have an undo). ' +
-      'The remaining ' + Math.max(0, total - done) + ' will not be attempted.';
-    if (!confirm(msg)) return;
-    btn.disabled = true;
-    btn.textContent = 'Cancelling…';
-    google.script.run
-      .withSuccessHandler(function (result) {
-        btn.textContent = 'Cancel';
-        btn.disabled = false;
-        if (result && result.cancelled) {
-          setStatus('Cancelled job ' + (result.jobId || '').slice(0, 8) + ' — ' +
-                    result.processed + '/' + result.total + ' had already transferred.', 'ok');
-        } else {
-          setStatus('Cancel failed: ' + (result && result.reason ? result.reason : 'unknown'), 'error');
-        }
-        fetchQueue(true);
-      })
-      .withFailureHandler(function (err) {
-        btn.textContent = 'Cancel';
-        btn.disabled = false;
-        setStatus('Cancel error: ' + errMsg(err), 'error');
-      })
-      .cancelJob(job.jobId);
+    showConfirmDialog({
+      title: 'Cancel transfer?',
+      bodyHtml:
+        '<p><strong>Initiator:</strong> ' + escapeHtmlText(job.initiator || '—') + '</p>' +
+        '<p><strong>New owner:</strong> ' + escapeHtmlText(job.newOwnerEmail || '—') + '</p>' +
+        '<p><strong>Status:</strong> ' + escapeHtmlText(job.status || '—') + '</p>' +
+        '<p><strong>Progress at cancel:</strong> ' + done + '/' + total + '</p>' +
+        '<p>The ' + done + ' item(s) already transferred will remain transferred. The remaining ' +
+        Math.max(0, total - done) + ' will not be attempted.</p>',
+      confirmLabel: 'Cancel transfer'
+    }, function (confirmed) {
+      if (!confirmed) return;
+      btn.disabled = true;
+      btn.textContent = 'Cancelling…';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          btn.textContent = 'Cancel';
+          btn.disabled = false;
+          if (result && result.cancelled) {
+            setStatus('Cancelled job ' + (result.jobId || '').slice(0, 8) + ' — ' +
+                      result.processed + '/' + result.total + ' had already transferred.', 'ok');
+          } else {
+            var reason = result && result.reason ? result.reason : 'unknown';
+            setStatus('Cancel failed: ' + reason, 'error');
+            showAlertDialog('Could not cancel transfer', reason);
+          }
+          fetchQueue(true);
+        })
+        .withFailureHandler(function (err) {
+          btn.textContent = 'Cancel';
+          btn.disabled = false;
+          setStatus('Cancel error: ' + errMsg(err), 'error');
+          showAlertDialog('Could not cancel transfer', errMsg(err));
+        })
+        .cancelJob(job.jobId);
+    });
   }
 
-  function cell(text) {
-    var td = document.createElement('td');
-    td.textContent = text == null ? '' : String(text);
-    return td;
+  function appendQueueMeta(dl, label, value, title) {
+    var dt = document.createElement('dt');
+    dt.textContent = label;
+    var dd = document.createElement('dd');
+    dd.textContent = value == null ? '' : String(value);
+    if (title) dd.title = title;
+    dl.appendChild(dt);
+    dl.appendChild(dd);
   }
-  function progressCell(done, total) {
-    var td = document.createElement('td');
+  function progressBar(done, total) {
+    var wrap = document.createElement('div');
     var pct = total > 0 ? Math.min(100, Math.round(100 * done / total)) : 0;
     var bar = document.createElement('span');
     bar.className = 'pt-progress-bar';
@@ -336,12 +352,11 @@
     var text = document.createElement('span');
     text.className = 'pt-progress-text';
     text.textContent = done + '/' + total;
-    td.appendChild(bar);
-    td.appendChild(text);
-    return td;
+    wrap.appendChild(bar);
+    wrap.appendChild(text);
+    return wrap;
   }
-  function statusPillCell(status) {
-    var td = document.createElement('td');
+  function statusPill(status) {
     var pill = document.createElement('span');
     var kind = status === 'running' ? 'running'
              : status === 'queued'  ? 'queued'
@@ -349,8 +364,7 @@
              : 'off';
     pill.className = 'pt-pill pt-pill--' + kind;
     pill.textContent = status || '—';
-    td.appendChild(pill);
-    return td;
+    return pill;
   }
   function shortTime(iso) {
     if (!iso) return '—';
@@ -378,6 +392,64 @@
     els.status.className = 'pt-status' + (kind ? ' pt-status--' + kind : '');
   }
 
+  function escapeHtmlText(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function showModalDialog(opts) {
+    modalState = {
+      mode: opts.mode || 'confirm',
+      onClose: opts.onClose || function () {}
+    };
+    lastFocusedEl = document.activeElement;
+    els.modalTitle.textContent = opts.title || '';
+    els.modalBody.innerHTML = opts.bodyHtml || '';
+    els.modalConfirmBtn.textContent = opts.confirmLabel || 'Continue';
+    els.modalCancelBtn.textContent = opts.cancelLabel || 'Cancel';
+    els.modalCancelBtn.hidden = modalState.mode === 'alert';
+    els.modalBackdrop.hidden = false;
+    document.body.classList.add('pt-modal-open');
+    setTimeout(function () {
+      (modalState.mode === 'alert' ? els.modalConfirmBtn : els.modalCancelBtn).focus();
+    }, 0);
+  }
+
+  function closeModalDialog(confirmed) {
+    if (!modalState) return;
+    var onClose = modalState.onClose;
+    modalState = null;
+    els.modalBackdrop.hidden = true;
+    document.body.classList.remove('pt-modal-open');
+    if (lastFocusedEl && lastFocusedEl.focus) lastFocusedEl.focus();
+    onClose(confirmed);
+  }
+
+  function showConfirmDialog(opts, callback) {
+    showModalDialog({
+      mode: 'confirm',
+      title: opts.title,
+      bodyHtml: opts.bodyHtml,
+      confirmLabel: opts.confirmLabel || 'Continue',
+      cancelLabel: opts.cancelLabel || 'Cancel',
+      onClose: callback
+    });
+  }
+
+  function showAlertDialog(title, message, callback) {
+    showModalDialog({
+      mode: 'alert',
+      title: title,
+      bodyHtml: '<p>' + escapeHtmlText(message) + '</p>',
+      confirmLabel: 'OK',
+      onClose: callback || function () {}
+    });
+  }
+
   // ---- Root load ----------------------------------------------------------
   function onLoad() {
     var id = (els.targetFolderId.value || '').trim();
@@ -393,6 +465,7 @@
         // Populate the input so the user learns what the root ID looks like
         // and can copy it if they want to bookmark or share it.
         els.targetFolderId.value = root.id;
+        els.advancedLoad.open = false;
         els.loadMyDriveBtn.disabled = false;
         loadRoot(root.id);
       })
@@ -899,25 +972,37 @@
   function onCommit() {
     var newOwner = (els.newOwnerEmail.value || '').trim();
     if (!newOwner) { setStatus('Enter a new owner email.', 'error'); return; }
+    if (!/@princeton\.edu$/i.test(newOwner)) {
+      setStatus('New owner email must end in princeton.edu.', 'error');
+      return;
+    }
     var recursiveIds = Object.keys(state.recursive);
     var explicitIds  = Object.keys(state.explicit);
     if (recursiveIds.length === 0 && explicitIds.length === 0) {
       setStatus('Nothing selected — nothing to do.', 'error');
       return;
     }
-    var msg = 'Transfer ownership to ' + newOwner + '?\n\n' +
-      recursiveIds.length + ' folder(s) will be transferred *with everything inside*.\n' +
-      explicitIds.length  + ' individual item(s) will be transferred.\n\n' +
-      'Non-owned items in the walk will be skipped automatically.\n\n' +
-      'IMPORTANT: Selected items will be moved to ' + newOwner + '\'s My Drive root ' +
-      'so they show up in their normal Drive listings. This also means the items will ' +
-      'disappear from YOUR folder tree (you will keep editor access; find them via ' +
-      '"Shared with me" or by direct link).';
-    if (!confirm(msg)) return;
+    showConfirmDialog({
+      title: 'Start transfer?',
+      bodyHtml:
+        '<p><strong>New owner:</strong> ' + escapeHtmlText(newOwner) + '</p>' +
+        '<p><strong>Recursive folders:</strong> ' + recursiveIds.length + '</p>' +
+        '<p><strong>Individual items:</strong> ' + explicitIds.length + '</p>' +
+        '<p>Selected folders will transfer with everything inside them. Non-owned items will be skipped automatically.</p>' +
+        '<p>Top-level selected items will move to ' + escapeHtmlText(newOwner) + '\'s My Drive root, so they may disappear from your folder tree even though you keep editor access.</p>',
+      confirmLabel: 'Start transfer'
+    }, function (confirmed) {
+      if (!confirmed) return;
+      beginCommit(newOwner, recursiveIds, explicitIds);
+    });
+  }
+
+  function beginCommit(newOwner, recursiveIds, explicitIds) {
     els.loadBtn.disabled = true;
+    els.loadMyDriveBtn.disabled = true;
     els.commitBtn.disabled = true;
     setStatus('Committing… large jobs will resume via a time-driven trigger; you will receive an email report.');
-    // Start polling the queue right away so the "0 · Job queue" card reflects
+    // Start polling the queue right away so the in-progress sidebar reflects
     // real progress during the sync commit call (which can run several
     // minutes for a large selection). Without this, the client sits on an
     // empty queue until commitTransfer returns.
@@ -940,11 +1025,12 @@
 
   function onCommitSuccess(result) {
     els.loadBtn.disabled = false;
+    els.loadMyDriveBtn.disabled = false;
     els.commitBtn.disabled = false;
     if (result && result.queued) {
       setStatus(
         'Queued behind ' + (result.ahead || 0) + ' other job(s). It will start as soon as the current one finishes; ' +
-        'you will get an email when yours completes. Watch the Job queue at the top for progress.', 'ok'
+        'you will get an email when yours completes. Watch In-progress Transfers for progress.', 'ok'
       );
     } else if (result && result.done) {
       // Job ran to completion inside commitTransfer — no need to wait or
@@ -962,7 +1048,7 @@
         : '';
       setStatus(
         'Job started; checkpointed and handed off to the resume trigger.' + progress +
-        ' Watch the Job queue at the top for progress. You will get an email when it completes.',
+        ' Watch In-progress Transfers for progress. You will get an email when it completes.',
         'ok'
       );
     }
@@ -970,8 +1056,10 @@
   }
   function onCommitFailure(err) {
     els.loadBtn.disabled = false;
+    els.loadMyDriveBtn.disabled = false;
     els.commitBtn.disabled = false;
     setStatus('Commit failed: ' + errMsg(err), 'error');
+    showAlertDialog('Transfer could not start', errMsg(err));
   }
 
   function errMsg(err) {
