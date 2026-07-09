@@ -142,6 +142,23 @@ else
 fi
 
 # --- 2) Upload local files -------------------------------------------------
+# Load local .env variables if present
+if [[ -f "$ROOT/.env" ]]; then
+  export $(grep -v '^#' "$ROOT/.env" | xargs)
+fi
+
+echo "Generating Config.gs from environment configuration…"
+cat << EOF > "$ROOT/Config.gs"
+// Config.gs — Auto-generated config loader from .env at deployment time.
+// DO NOT COMMIT this file. It is ignored by git.
+
+function initializeConfigProperties() {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('gmove.allowed_users', '${GMOVE_ALLOWED_USERS:-}');
+  props.setProperty('gmove.support_contact', '${GMOVE_SUPPORT_CONTACT:-}');
+}
+EOF
+
 echo "Pushing files from $ROOT …"
 gws script +push --script "$SCRIPT_ID" --dir "$ROOT"
 

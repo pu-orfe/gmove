@@ -52,29 +52,23 @@ var BROWSE_PAGE_CAP = 500;
 //
 // The Apps Script webapp manifest already restricts access to the princeton.edu
 // domain (webapp.access = DOMAIN). This constant restricts further, down to a
-// specific set of individuals. A ScriptProperty override at key
-// 'gmove.allowed_users' (comma-separated list) takes precedence over the
-// in-code list — that lets an owner rotate membership without a code deploy.
-var SETTINGS = {
-  ALLOWED_USERS: [
-    'bino@princeton.edu',
-    'orfe-files@princeton.edu',
-    'cdreyer@princeton.edu'
-  ],
-  SUPPORT_CONTACT: 'bino@princeton.edu'
-};
+// specific set of individuals. ScriptProperties carry the allowlist at key
+// 'gmove.allowed_users' (comma-separated list) and the support contact at key
+// 'gmove.support_contact'.
 
 function getAllowlist_() {
-  var override = PropertiesService.getScriptProperties().getProperty('gmove.allowed_users');
-  var list = override
-    ? override.split(',')
-    : SETTINGS.ALLOWED_USERS.slice();
+  var override = PropertiesService.getScriptProperties().getProperty('gmove.allowed_users') || '';
+  var list = override ? override.split(',') : [];
   var out = [];
   for (var i = 0; i < list.length; i++) {
     var e = String(list[i] || '').trim().toLowerCase();
     if (e) out.push(e);
   }
   return out;
+}
+
+function getSupportContact_() {
+  return PropertiesService.getScriptProperties().getProperty('gmove.support_contact') || 'support@princeton.edu';
 }
 
 function isAllowedUser_(email) {
@@ -97,7 +91,7 @@ function assertAuthorized_() {
     console.warn('gmove: rejected access attempt by ' + (email || '(unknown)'));
     throw new Error(
       'You are not on the Drive Ownership Transfer access list. Contact ' +
-      SETTINGS.SUPPORT_CONTACT + ' to request access.'
+      getSupportContact_() + ' to request access.'
     );
   }
 }
@@ -118,7 +112,7 @@ function assertAuthorizedForDiagnostics_() {
     console.warn('gmove: rejected diagnostic access attempt by ' + email);
     throw new Error(
       'You are not on the Drive Ownership Transfer access list. Contact ' +
-      SETTINGS.SUPPORT_CONTACT + ' to request access.'
+      getSupportContact_() + ' to request access.'
     );
   }
 }
@@ -126,6 +120,9 @@ function assertAuthorizedForDiagnostics_() {
 // ---------- Web UI ---------------------------------------------------------
 
 function doGet() {
+  if (typeof initializeConfigProperties === 'function') {
+    initializeConfigProperties();
+  }
   var email = getActiveUserEmail();
   if (!isAllowedUser_(email)) {
     console.warn('gmove: doGet rejected ' + (email || '(unknown)'));
@@ -147,7 +144,7 @@ function getActiveUserEmail() {
 }
 
 function renderUnauthorized_(email) {
-  var contact = SETTINGS.SUPPORT_CONTACT;
+  var contact = getSupportContact_();
   var safeEmail = String(email || 'unknown').replace(/[<>&"']/g, '');
   var safeContact = contact.replace(/[<>&"']/g, '');
   var html = [

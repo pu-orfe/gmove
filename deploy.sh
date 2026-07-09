@@ -21,6 +21,23 @@ if [[ ! -f .clasp.json ]]; then
   exit 1
 fi
 
+# Load local .env variables if present
+if [[ -f .env ]]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+echo "Generating Config.gs from environment configuration…"
+cat << EOF > Config.gs
+// Config.gs — Auto-generated config loader from .env at deployment time.
+// DO NOT COMMIT this file. It is ignored by git.
+
+function initializeConfigProperties() {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('gmove.allowed_users', '${GMOVE_ALLOWED_USERS:-}');
+  props.setProperty('gmove.support_contact', '${GMOVE_SUPPORT_CONTACT:-}');
+}
+EOF
+
 echo "Pushing project files…"
 clasp push -f
 

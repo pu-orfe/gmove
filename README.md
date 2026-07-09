@@ -394,29 +394,24 @@ can hit the URL. On top of that, an in-code allowlist restricts the app
 further to a named list of users; anyone else in the domain sees a
 "not authorized" page instead of the app.
 
-The list lives at the top of `Code.gs`:
+The access list and support contact are configured via environment variables inside `.env` (locally) and GitHub repository secrets (in CI).
+
+At deployment time, the deployment scripts (`./deploy.sh`, `./update.sh`, or `./deploy-gws.sh`) read these environment variables and compile them into a `Config.gs` file, which is pushed to script.google.com but ignored by Git:
 
 ```javascript
-var SETTINGS = {
-  ALLOWED_USERS: [
-    'bino@princeton.edu',
-    'orfe-files@princeton.edu',
-    'cdreyer@princeton.edu'
-  ],
-  SUPPORT_CONTACT: 'bino@princeton.edu'
-};
+function initializeConfigProperties() {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('gmove.allowed_users', '...');
+  props.setProperty('gmove.support_contact', '...');
+}
 ```
 
-Two ways to change membership:
+This configures them directly into Google Apps Script's `ScriptProperties` service.
 
-1. **Code + deploy.** Edit `SETTINGS.ALLOWED_USERS`, run `./update.sh`. This
-   is the version-controlled option and the one an audit trail can point
-   to.
-2. **ScriptProperty override.** Set a ScriptProperty named
-   `gmove.allowed_users` to a comma-separated list of emails (in the
-   Apps Script editor: **Project Settings → Script Properties**). When
-   set, this overrides the in-code list and takes effect immediately —
-   no deploy needed. Deleting the property reverts to the in-code list.
+To update membership:
+1. **Local deploy**: Add or update `GMOVE_ALLOWED_USERS` or `GMOVE_SUPPORT_CONTACT` inside `.env`, then run `./update.sh`.
+2. **CI / CD (GitHub Actions)**: Update your repository's environment secrets and let CI handle the deploy.
+3. **Manual Override**: You can also set/override `gmove.allowed_users` and `gmove.support_contact` directly inside the Apps Script editor under **Project Settings → Script Properties**.
 
 Matching is case-insensitive and whitespace-trimmed. Rejections are logged
 to Stackdriver (`clasp open-logs`) with the attempted email — you'll want
