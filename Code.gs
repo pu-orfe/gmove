@@ -936,17 +936,25 @@ function runBatch_impl_(setCurrentJobId) {
 function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
   var moveToRoot = !!item.moveToRoot;
-  // sendNotificationEmail=false — per-item mail is what triggers the
-  // "successfully shared but emails could not be sent" throttle when the
-  // same new owner is on the receiving end of a large batch. The script
-  // now sends ONE consolidated summary to the new owner from
-  // sendNewOwnerReport_ once the whole run finishes, so per-item mail is
-  // pure noise.
+  // sendNotificationEmail=true (Drive's default for role=owner).
+  //
+  // Drive's REST API explicitly rejects the combination
+  // transferOwnership=true + sendNotificationEmail=false with the error
+  //   "sendNotificationEmail parameter is only applicable for permissions
+  //    of type 'user' or 'group', and must not be disabled for ownership
+  //    transfers"
+  //
+  // So per-item notifications are unavoidable. Some fraction will be
+  // rate-limited when many go to the same recipient in a short window —
+  // that's the "successfully shared but emails could not be sent" 400 that
+  // isDriveNotificationOnlyFailure() reclassifies as SUCCESS below. The
+  // ownership change happens; only the mail is lost, and the new owner
+  // gets one consolidated summary from sendNewOwnerReport_ regardless.
   var url = 'https://www.googleapis.com/drive/v3/files/' +
             encodeURIComponent(item.id) +
             '/permissions?transferOwnership=true' +
             '&moveToNewOwnersRoot=' + (moveToRoot ? 'true' : 'false') +
-            '&sendNotificationEmail=false';
+            '&sendNotificationEmail=true';
   try {
     var response = UrlFetchApp.fetch(url, {
       method: 'post',

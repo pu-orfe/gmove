@@ -305,21 +305,31 @@ to tear a specific one down.
   subtree structure survives the transfer intact — a `Project-X/` folder
   moves as one thing to the new owner's My Drive, with all its files still
   inside it.
-- **Silent transfers + one summary email to the new owner.** Per-item
-  notification email is suppressed (`sendNotificationEmail=false`) — Drive
-  throttles per-recipient at somewhere around 100 emails per short window,
-  and any large batch to the same new owner used to trip that limit and
-  return a misleading `400 Sorry, the items were successfully shared but
-  emails could not be sent...`. Instead, when the whole job completes and
-  the initiator's report email is sent successfully, `sendNewOwnerReport_`
-  sends ONE consolidated notification to the new owner: a
-  Paper-Tiger-styled HTML body summarizing counts and listing the items
-  that landed at their My Drive root, plus a CSV attachment listing every
-  transferred item with a direct `drive.google.com/open?id=<id>` link.
-  The CSV is the fallback so the new owner can navigate to items even if
-  they do not surface in My Drive right away. Best-effort — a mail
-  failure on this notification is `console.error`'d but does not block
-  job cleanup.
+- **Per-item notifications are unavoidable + one summary email to the new
+  owner.** Drive's REST API rejects the combination
+  `transferOwnership=true` + `sendNotificationEmail=false` with the exact
+  error *"sendNotificationEmail parameter is only applicable for
+  permissions of type 'user' or 'group', and must not be disabled for
+  ownership transfers"*. There is no override; suppressing the mail is
+  simply not allowed for ownership transfers. So every item's transfer
+  fires a "you have been added as an owner" notification to the new
+  owner, and a large batch to a single recipient will hit Drive's
+  per-recipient rate limit (empirically ~100 in a short window) —
+  producing HTTP 400s with *"Sorry, the items were successfully shared
+  but emails could not be sent..."*. `isDriveNotificationOnlyFailure()`
+  in Logic.gs matches that message; those items are reclassified as
+  SUCCESS in the report because the ownership change actually went
+  through (only the notification mail was throttled).
+
+  As a partial mitigation, `sendNewOwnerReport_` sends ONE consolidated
+  summary to the new owner once the whole job finishes: a
+  Paper-Tiger-styled HTML body with counts and My Drive root items,
+  plus a CSV attachment listing every transferred item with a direct
+  `drive.google.com/open?id=<id>` link. Even if the new owner filters
+  or ignores the barrage of per-item notifications, this single summary
+  gives them the complete list and a fallback locator per item.
+  Best-effort — a MailApp failure here is `console.error`'d but does
+  not block job cleanup.
 - **Old owner loses their folder view.** Because top-level items move to
   the new owner's My Drive root, they disappear from the initiator's
   folder tree. The initiator retains editor access (Drive adds them as a
