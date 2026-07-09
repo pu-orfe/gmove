@@ -451,9 +451,39 @@
   }
 
   // ---- Root load ----------------------------------------------------------
+  function extractFolderId(input) {
+    if (!input) return null;
+    var trimmed = input.trim();
+    
+    var matchFolders = trimmed.match(/\/folders\/([a-zA-Z0-9_\-]+)/);
+    if (matchFolders) return matchFolders[1];
+    
+    var matchParam = trimmed.match(/[?&]id=([a-zA-Z0-9_\-]+)/);
+    if (matchParam) return matchParam[1];
+    
+    if (/^https?:\/\//i.test(trimmed)) {
+      return null;
+    }
+    
+    if (/^[a-zA-Z0-9_\-]+$/.test(trimmed)) {
+      return trimmed;
+    }
+    
+    return null;
+  }
+
   function onLoad() {
-    var id = (els.targetFolderId.value || '').trim();
-    if (!id) { setStatus('Enter a target folder ID first.', 'error'); return; }
+    var rawInput = (els.targetFolderId.value || '').trim();
+    if (!rawInput) {
+      setStatus('Enter a folder link or ID first.', 'error');
+      return;
+    }
+    var id = extractFolderId(rawInput);
+    if (!id) {
+      setStatus('Invalid Google Folder link or folder ID. Please paste a valid link.', 'error');
+      showAlertDialog('Invalid link', 'Please enter a valid Google Drive folder link or folder ID.');
+      return;
+    }
     loadRoot(id);
   }
 
