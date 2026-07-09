@@ -199,7 +199,7 @@
     tr.appendChild(progressCell(job.processed || 0, job.total || 0));
     tr.appendChild(cell(shortTime(job.startedAt)));
     tr.appendChild(statusPillCell(job.status));
-    tr.appendChild(cancelCell(job));
+    tr.appendChild(actionsCell(job));
 
     // If runBatch_ threw for this job on a previous invocation, render the
     // captured message under the main row so it's plainly visible.
@@ -217,16 +217,73 @@
     return { mainRow: tr, errorRow: errorRow };
   }
 
-  function cancelCell(job) {
+  function actionsCell(job) {
     var td = document.createElement('td');
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pt-btn pt-btn--outline pt-btn--small';
-    btn.textContent = 'Cancel';
-    btn.title = 'Drop this job from the queue. Items already transferred stay transferred.';
-    btn.addEventListener('click', function () { cancelJob(job, btn); });
-    td.appendChild(btn);
+    td.className = 'pt-queue__actions';
+
+    // Kick — force runBatch_ NOW instead of waiting for the trigger scheduler
+    // or the 90-second auto-nudge threshold. Enabled for jobs that have work
+    // to do (running) or a mail retry pending (report_pending). Disabled for
+    // queued jobs because they'd just skip the queue order and confuse
+    // people; the auto-nudge from the running job's completion handles them.
+    var canKick = (job.status === 'running' || job.status === 'report_pending');
+    var kickBtn = document.createElement('button');
+    kickBtn.type = 'button';
+    kickBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
+    kickBtn.textContent = 'Kick';
+    kickBtn.title = canKick
+      ? 'Force runBatch_ NOW rather than wait for the resume trigger or 90s auto-nudge.'
+      : 'Only running or report_pending jobs can be kicked directly.';
+    kickBtn.disabled = !canKick;
+    kickBtn.addEventListener('click', function () { kickJob(job, kickBtn); });
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.title = 'Drop this job from the queue. Items already transferred stay transferred.';
+    cancelBtn.style.marginLeft = 'var(--space-2)';
+    cancelBtn.addEventListener('click', function () { cancelJob(job, cancelBtn); });
+
+    td.appendChild(kickBtn);
+    td.appendChild(cancelBtn);
     return td;
+  }
+
+  function kickJob(job, btn) {
+    btn.disabled = true;
+    var originalLabel = btn.textContent;
+    btn.textContent = 'Kicking…';
+    setStatus('Kicking job ' + (job.jobId || '').slice(0, 8) + '…');
+    // Reset the client-side auto-nudge cooldown so a follow-on auto poll
+    // will re-fire if this kick doesn't fully drain the job.
+    lastAutoNudgeAt = 0;
+    google.script.run
+      .withSuccessHandler(function (result) {
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+        var tail;
+        if (result && result.done) {
+          tail = ' → completed. Processed ' + result.processed + '/' + result.total + '.';
+        } else if (result && typeof result.processed === 'number') {
+          tail = ' → advanced to ' + result.processed + '/' + result.total + ' (still running).';
+        } else if (result && result.message) {
+          tail = ' → ' + result.message;
+        } else {
+          tail = ' → ' + JSON.stringify(result);
+        }
+        setStatus('Kick returned' + tail, 'ok');
+        fetchQueue(true);
+      })
+      .withFailureHandler(function (err) {
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+        setStatus('Kick failed: ' + errMsg(err), 'error');
+        // Even on failure, refresh — the server may have written a lastError
+        // to the meta which we want visible.
+        fetchQueue(true);
+      })
+      .nudgeResume();
   }
 
   function cancelJob(job, btn) {
