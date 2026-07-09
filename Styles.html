@@ -1,0 +1,414 @@
+<!--
+  ============================================================================
+  Theme Profile:              Paper Tiger — Princeton ORFE (fontset2, flavor1, btn-v1)
+  Style Repository / Assets:  https://github.com/pu-orfe/paper-tiger
+  Kit snapshot:               2026-05-08
+
+  This file inlines the subset of Paper Tiger required by this app:
+    - tokens/fonts.css   (Google Fonts import for the open fallback)
+    - tokens/tokens.css  (:root design tokens + typographic base)
+    - components/buttons.css   (.pt-btn variants)
+    - components/forms.css     (.pt-input / .pt-field / .pt-check)
+    - components/layout.css    (.pt-container / .pt-page-title / .pt-surface)
+  Followed by the app-specific tree-view rules, which consume tokens only.
+
+  To re-theme: swap the :root token block and the pt-* component rules with
+  a different kit; the .app / .tree rules below are pure token consumers and
+  do not need to change.
+
+  Adobe Typekit for sofia-pro is licensed only for princeton.edu domains
+  (kit mxl1ncs). This deployment falls back to open-license Source Sans 3 /
+  Source Serif 4 — the typographic rhythm stays Tiger-adjacent.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap">
+
+<style>
+/* ---------------------------------------------------------------------------
+ * Paper Tiger — tokens/tokens.css (verbatim subset)
+ * ------------------------------------------------------------------------ */
+:root {
+  /* Siempre accent (Princeton Orange) */
+  --siempre-accent:          #e77500;
+  --siempre-accent-medium:   #C1560E;
+  --siempre-accent-light:    #F7964A;
+  --siempre-accent-lighter:  #FEECDE;
+  --siempre-accent-lightest: #FFF7F2;
+  --siempre-accent-dark:     #C1560E;
+  --siempre-accent-darker:   #6D2E03;
+  --siempre-accent-darkest:  #411C02;
+
+  --color-brand-100: var(--siempre-accent-darkest);
+  --color-brand-90:  var(--siempre-accent-darker);
+  --color-brand-80:  var(--siempre-accent-dark);
+  --color-brand-70:  var(--siempre-accent);
+  --color-brand-60:  var(--siempre-accent-light);
+  --color-brand-20:  var(--siempre-accent-lighter);
+  --color-brand-10:  var(--siempre-accent-lightest);
+
+  --color-neutral-5:   #f7f7f7;
+  --color-neutral-10:  #eeeeee;
+  --color-neutral-20:  #D9D9D9;
+  --color-neutral-40:  #a0a0a0;
+  --color-neutral-60:  #717171;
+  --color-neutral-85:  #333333;
+  --color-neutral-90:  #1d1d1d;
+  --color-neutral-100: #121212;
+
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-ink:   var(--color-neutral-85);
+  --color-focus-outline: #3b99fc;
+
+  /* Typography — Typekit sofia-pro / abril-text preferred; Google fallbacks below */
+  --font-display: "sofia-pro", "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --font-body:    "abril-text", "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-label:   "sofia-pro", "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --font-ui:      "sofia-pro", "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --font-weight-regular:  400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+
+  --font-size-xs:   0.85rem;
+  --font-size-sm:   0.9375rem;
+  --font-size-base: 1rem;
+  --font-size-md:   1.125rem;
+  --font-size-lg:   1.25rem;
+  --font-size-xl:   1.5rem;
+  --font-size-h3:   1.8rem;
+  --font-size-h2:   2.125rem;
+  --font-size-h1:   3.35rem;
+  --font-size-h1-sm: 2.0625rem;
+
+  --line-tight:   1.1;
+  --line-snug:    1.3;
+  --line-normal:  1.5;
+  --line-relaxed: 1.6;
+
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  --radius-none:   0;
+  --radius-sm:     0.25rem;
+  --radius-md:     0.5rem;
+  --radius-pill:   2rem;
+  --btn-border-radius: var(--radius-none);
+
+  --border-footer-accent: 5px solid var(--color-brand-70);
+  --shadow-focus: 0 0 0 3px var(--color-focus-outline);
+
+  --container-max:    90rem;
+  --container-gutter: 1rem;
+}
+
+html { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: inherit; }
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  background: var(--color-neutral-5);
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  line-height: var(--line-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  color: var(--color-neutral-100);
+  margin: 1.5rem 0 0.75rem;
+}
+h1 { font-size: var(--font-size-h1-sm); font-weight: var(--font-weight-medium); line-height: var(--line-tight); }
+@media (min-width: 48rem) { h1 { font-size: var(--font-size-h1); } }
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.3;
+  position: relative;
+}
+h2::after {
+  content: "";
+  width: 50px;
+  height: 3px;
+  display: block;
+  background-color: var(--color-brand-70);
+  margin-top: 0.5rem;
+}
+.pt-no-underline::after { display: none !important; }
+h3 { font-size: var(--font-size-h3); font-weight: var(--font-weight-regular); line-height: 1.31; }
+
+a { color: var(--color-brand-90); text-underline-offset: 2px; }
+a:hover, a:focus { color: var(--color-brand-70); }
+a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset: 2px; }
+::selection { background: var(--color-brand-20); color: var(--color-neutral-100); }
+
+/* ---------------------------------------------------------------------------
+ * Paper Tiger — components/layout.css (subset)
+ * ------------------------------------------------------------------------ */
+.pt-container {
+  width: 100%;
+  max-width: 72rem; /* narrower than the site-wide 90rem — this is a tool, not a page */
+  margin-inline: auto;
+  padding-inline: var(--container-gutter);
+}
+@media (min-width: 48rem) { .pt-container { padding-inline: 2rem; } }
+
+.pt-page-title {
+  background: var(--color-neutral-100);
+  color: var(--color-white);
+  padding: var(--space-10) 0 var(--space-8);
+}
+.pt-page-title h1 {
+  margin: 0;
+  color: var(--color-white);
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-h1-sm);
+  border-bottom: 4px solid var(--color-brand-70);
+  display: inline-block;
+  padding-bottom: var(--space-2);
+}
+@media (min-width: 48rem) { .pt-page-title h1 { font-size: 2.5rem; } }
+.pt-page-title p {
+  margin: var(--space-3) 0 0;
+  color: var(--color-neutral-20);
+  font-family: var(--font-body);
+  font-size: var(--font-size-md);
+  max-width: 48rem;
+}
+
+.pt-surface        { background: var(--color-white); }
+.pt-surface--neutral { background: var(--color-neutral-5); }
+.pt-outline-light  { border: 1px solid var(--color-neutral-10); padding: var(--space-6); }
+
+.pt-block-heading {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--color-neutral-100);
+}
+.pt-block-heading h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-neutral-100);
+}
+.pt-block-heading h2::after { display: none; }
+
+.pt-cluster { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.pt-stack > * + * { margin-top: var(--space-4); }
+
+/* ---------------------------------------------------------------------------
+ * Paper Tiger — components/buttons.css
+ * ------------------------------------------------------------------------ */
+.pt-btn {
+  --btn-border-radius: var(--radius-none);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  border-radius: var(--btn-border-radius);
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.pt-btn:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset: 2px; }
+.pt-btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+.pt-btn--primary {
+  background: var(--siempre-accent);
+  border-color: var(--siempre-accent-dark);
+  color: var(--color-white);
+}
+.pt-btn--primary:hover, .pt-btn--primary:focus {
+  background: var(--siempre-accent-dark);
+  border-color: var(--siempre-accent-darker);
+}
+.pt-btn--secondary {
+  background: var(--color-neutral-100);
+  border-color: var(--color-neutral-100);
+  color: var(--color-white);
+}
+.pt-btn--secondary:hover, .pt-btn--secondary:focus {
+  background: var(--color-neutral-85);
+  border-color: var(--color-neutral-85);
+}
+.pt-btn--outline {
+  background: transparent;
+  border-color: var(--color-neutral-100);
+  color: var(--color-neutral-100);
+}
+.pt-btn--outline:hover, .pt-btn--outline:focus {
+  background: var(--color-neutral-100);
+  color: var(--color-white);
+}
+
+/* ---------------------------------------------------------------------------
+ * Paper Tiger — components/forms.css
+ * ------------------------------------------------------------------------ */
+.pt-form { display: flex; flex-direction: column; gap: var(--space-4); }
+.pt-field { display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 260px; }
+.pt-field__label {
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-90);
+}
+.pt-field__hint {
+  color: var(--color-neutral-60);
+  font-size: var(--font-size-xs);
+}
+.pt-input {
+  font: inherit;
+  font-family: var(--font-display);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--color-neutral-40);
+  background: var(--color-white);
+  color: var(--color-neutral-100);
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+.pt-input:focus {
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: 1px;
+  border-color: var(--color-neutral-100);
+}
+.pt-check { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-display); }
+.pt-check input { accent-color: var(--color-brand-70); }
+
+/* ---------------------------------------------------------------------------
+ * App-specific — consumes tokens only. If the theme is swapped, the pt-*
+ * blocks above change; this block does not need to.
+ * ------------------------------------------------------------------------ */
+.app__hero-body {
+  padding-block: 0 var(--space-8);
+}
+
+.pt-status {
+  min-height: 1.4em;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-60);
+  margin-top: var(--space-3);
+}
+.pt-status--ok    { color: var(--color-brand-80); font-weight: var(--font-weight-semibold); }
+.pt-status--error { color: var(--color-brand-90); font-weight: var(--font-weight-semibold); }
+
+.pt-row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.pt-row--actions { margin-top: var(--space-4); }
+
+.pt-pill {
+  display: inline-block;
+  font-family: var(--font-label);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+.pt-pill--ok   { background: var(--color-brand-20);   color: var(--color-brand-90); }
+.pt-pill--skip { background: var(--color-neutral-10); color: var(--color-neutral-85); }
+.pt-pill--off  { background: var(--color-neutral-5);  color: var(--color-neutral-60); border: 1px solid var(--color-neutral-20); }
+
+.pt-counters {
+  margin: var(--space-3) 0 var(--space-4);
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-60);
+  border-top: 1px solid var(--color-neutral-10);
+  border-bottom: 1px solid var(--color-neutral-10);
+  padding: var(--space-2) 0;
+}
+
+.pt-tree ul {
+  list-style: none;
+  padding-left: 1.25rem;
+  margin: 0;
+  border-left: 1px dashed var(--color-neutral-20);
+}
+.pt-tree > ul { padding-left: 0; border-left: none; }
+.pt-tree li { margin: 2px 0; }
+
+.pt-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-100);
+}
+.pt-node:hover { background: var(--color-brand-10); }
+.pt-node__toggle {
+  width: 16px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  color: var(--color-neutral-60);
+  font-family: var(--font-mono);
+}
+.pt-node__toggle--leaf { visibility: hidden; }
+.pt-node__icon { width: 16px; text-align: center; }
+.pt-node__label { flex: 1 1 auto; }
+.pt-node__label--folder { font-weight: var(--font-weight-semibold); }
+.pt-node__id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-neutral-60);
+}
+.pt-node input[type="checkbox"] { accent-color: var(--color-brand-70); }
+
+.pt-node--skip .pt-node__label {
+  color: var(--color-neutral-60);
+  text-decoration: line-through;
+}
+
+.pt-badge {
+  font-family: var(--font-label);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-neutral-10);
+  color: var(--color-neutral-85);
+}
+
+/* Focus ring on the interior card (WCAG helper) */
+.pt-outline-light:focus-within {
+  border-color: var(--color-neutral-100);
+}
+
+[hidden] { display: none !important; }
+</style>

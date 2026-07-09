@@ -1,0 +1,8 @@
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gmove-tests:local
+    command: node --test
+    working_dir: /app/tests

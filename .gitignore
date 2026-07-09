@@ -1,0 +1,21 @@
+# Apps Script deploy state (contains scriptId — safe-ish but tool-owned)
+.clasp.json
+.gws.json
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# Agent-authored artifacts — per user policy, do not commit
+CLAUDE.md
+.claude/
+memory/
+
+# Env
+.env
+.env.*
+!.env.example

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?!= include('Styles'); ?>
+  </head>
+  <body>
+    <header class="pt-page-title">
+      <div class="pt-container">
+        <h1>Drive Ownership Transfer</h1>
+        <p>Dry-run inventory, then a scoped production run with checkpointing. Themed to
+          <a href="https://github.com/pu-orfe/paper-tiger" target="_blank" rel="noopener">Paper Tiger</a>.
+        </p>
+      </div>
+    </header>
+
+    <main class="pt-container" style="padding-top:var(--space-8);padding-bottom:var(--space-16);">
+      <section class="pt-surface pt-outline-light" id="inputs-card">
+        <div class="pt-block-heading">
+          <h2>1 · Configure</h2>
+        </div>
+        <div class="pt-row">
+          <label class="pt-field">
+            <span class="pt-field__label">Target folder ID</span>
+            <input id="targetFolderId" class="pt-input" type="text" placeholder="1AbC-…" autocomplete="off">
+            <span class="pt-field__hint">The Drive folder to walk. Copy the ID from the URL after <code>/folders/</code>.</span>
+          </label>
+          <label class="pt-field">
+            <span class="pt-field__label">New owner email</span>
+            <input id="newOwnerEmail" class="pt-input" type="email" placeholder="alice@princeton.edu" autocomplete="off">
+            <span class="pt-field__hint">Must be inside your organization.</span>
+          </label>
+        </div>
+        <div class="pt-row pt-row--actions pt-cluster">
+          <button class="pt-btn pt-btn--primary" id="scanBtn" type="button">Scan Directory</button>
+          <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
+        </div>
+        <p class="pt-status" id="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="pt-surface pt-outline-light" id="tree-card" hidden style="margin-top:var(--space-8);">
+        <div class="pt-block-heading">
+          <h2>2 · Scope</h2>
+          <div class="pt-cluster">
+            <span class="pt-pill pt-pill--ok">Will change</span>
+            <span class="pt-pill pt-pill--skip">Not owned — will skip</span>
+            <span class="pt-pill pt-pill--off">Deselected</span>
+          </div>
+        </div>
+        <div id="counters" class="pt-counters"></div>
+        <div id="tree" class="pt-tree" role="tree" aria-label="Scan results"></div>
+      </section>
+    </main>
+
+    <?!= include('JavaScript'); ?>
+  </body>
+</html>

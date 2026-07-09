@@ -1,0 +1,232 @@
+<script>
+(function () {
+  'use strict';
+
+  var els = {
+    targetFolderId: document.getElementById('targetFolderId'),
+    newOwnerEmail:  document.getElementById('newOwnerEmail'),
+    scanBtn:        document.getElementById('scanBtn'),
+    commitBtn:      document.getElementById('commitBtn'),
+    status:         document.getElementById('status'),
+    treeCard:       document.getElementById('tree-card'),
+    tree:           document.getElementById('tree'),
+    counters:       document.getElementById('counters')
+  };
+
+  var state = {
+    tree: null,
+    activeUserEmail: null,
+    nodeById: {}
+  };
+
+  els.scanBtn.addEventListener('click', onScan);
+  els.commitBtn.addEventListener('click', onCommit);
+
+  function setStatus(msg, kind) {
+    els.status.textContent = msg || '';
+    els.status.className = 'pt-status' + (kind ? ' pt-status--' + kind : '');
+  }
+
+  function onScan() {
+    var id = (els.targetFolderId.value || '').trim();
+    if (!id) { setStatus('Enter a target folder ID first.', 'error'); return; }
+    els.scanBtn.disabled = true;
+    els.commitBtn.disabled = true;
+    setStatus('Scanning…');
+    google.script.run
+      .withSuccessHandler(onScanSuccess)
+      .withFailureHandler(onScanFailure)
+      .scanDirectory(id);
+  }
+
+  function onScanSuccess(result) {
+    state.tree = result.tree;
+    state.activeUserEmail = result.activeUserEmail;
+    state.nodeById = {};
+    indexNodes(state.tree);
+    renderTree(state.tree);
+    updateCounters();
+    els.treeCard.hidden = false;
+    els.scanBtn.disabled = false;
+    els.commitBtn.disabled = false;
+    setStatus('Scan complete. Active user: ' + state.activeUserEmail, 'ok');
+  }
+
+  function onScanFailure(err) {
+    els.scanBtn.disabled = false;
+    setStatus('Scan failed: ' + (err && err.message ? err.message : err), 'error');
+  }
+
+  function indexNodes(node) {
+    if (!node) return;
+    state.nodeById[node.id] = node;
+    if (node.children) for (var i = 0; i < node.children.length; i++) indexNodes(node.children[i]);
+  }
+
+  function renderTree(root) {
+    els.tree.innerHTML = '';
+    var ul = document.createElement('ul');
+    ul.appendChild(renderNode(root, ''));
+    els.tree.appendChild(ul);
+  }
+
+  function renderNode(node) {
+    var li = document.createElement('li');
+    li.dataset.id = node.id;
+
+    var row = document.createElement('div');
+    row.className = 'pt-node' + (node.transferable ? '' : ' pt-node--skip');
+
+    var toggle = document.createElement('span');
+    toggle.className = 'pt-node__toggle' + ((node.children && node.children.length) ? '' : ' pt-node__toggle--leaf');
+    toggle.textContent = (node.children && node.children.length) ? '▾' : '';
+    var childrenUl = null;
+    toggle.addEventListener('click', function () {
+      if (!childrenUl) return;
+      var open = childrenUl.style.display !== 'none';
+      childrenUl.style.display = open ? 'none' : '';
+      toggle.textContent = open ? '▸' : '▾';
+    });
+
+    var checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!node.transferable;
+    checkbox.disabled = !node.transferable;
+    checkbox.dataset.id = node.id;
+    checkbox.addEventListener('change', function () { onCheckboxChange(node.id, checkbox.checked); });
+    node._checkboxEl = checkbox;
+
+    var icon = document.createElement('span');
+    icon.className = 'pt-node__icon';
+    icon.textContent = node.isFolder ? '📁' : '📄';
+
+    var label = document.createElement('span');
+    label.className = 'pt-node__label' + (node.isFolder ? ' pt-node__label--folder' : '');
+    label.textContent = node.name;
+
+    var idSpan = document.createElement('span');
+    idSpan.className = 'pt-node__id';
+    idSpan.textContent = node.id.slice(0, 10) + '…';
+    idSpan.title = node.id;
+
+    row.appendChild(toggle);
+    row.appendChild(checkbox);
+    row.appendChild(icon);
+    row.appendChild(label);
+    row.appendChild(idSpan);
+
+    if (!node.transferable) {
+      var badge = document.createElement('span');
+      badge.className = 'pt-badge';
+      badge.textContent = node.owner
+        ? 'Owned by ' + node.owner + ' — will skip'
+        : 'No single owner (shared drive?) — will skip';
+      row.appendChild(badge);
+    }
+
+    li.appendChild(row);
+
+    if (node.children && node.children.length) {
+      childrenUl = document.createElement('ul');
+      for (var i = 0; i < node.children.length; i++) {
+        childrenUl.appendChild(renderNode(node.children[i]));
+      }
+      li.appendChild(childrenUl);
+    }
+    return li;
+  }
+
+  function onCheckboxChange(nodeId, checked) {
+    var node = state.nodeById[nodeId];
+    if (!node) return;
+    cascade(node, checked);
+    updateCounters();
+  }
+
+  function cascade(node, checked) {
+    if (!node.children) return;
+    for (var i = 0; i < node.children.length; i++) {
+      var c = node.children[i];
+      if (c.transferable && c._checkboxEl) c._checkboxEl.checked = checked;
+      cascade(c, checked);
+    }
+  }
+
+  function collectSelected(node, acc) {
+    if (!node) return acc;
+    if (node.transferable && node._checkboxEl && node._checkboxEl.checked) acc.push(node.id);
+    if (node.children) for (var i = 0; i < node.children.length; i++) collectSelected(node.children[i], acc);
+    return acc;
+  }
+
+  function updateCounters() {
+    var counts = { total: 0, transferable: 0, notOwned: 0, selected: 0 };
+    (function walk(n) {
+      if (!n) return;
+      counts.total++;
+      if (n.transferable) {
+        counts.transferable++;
+        if (n._checkboxEl && n._checkboxEl.checked) counts.selected++;
+      } else {
+        counts.notOwned++;
+      }
+      if (n.children) for (var i = 0; i < n.children.length; i++) walk(n.children[i]);
+    })(state.tree);
+    els.counters.textContent =
+      counts.total + ' items · ' +
+      counts.transferable + ' transferable · ' +
+      counts.notOwned + ' not owned · ' +
+      counts.selected + ' selected';
+  }
+
+  function onCommit() {
+    var newOwner = (els.newOwnerEmail.value || '').trim();
+    if (!newOwner) { setStatus('Enter a new owner email.', 'error'); return; }
+    if (!state.tree) { setStatus('Run a scan first.', 'error'); return; }
+    var selected = collectSelected(state.tree, []);
+    if (selected.length === 0) {
+      setStatus('Nothing selected — nothing to do.', 'error');
+      return;
+    }
+    if (!confirm('Transfer ' + selected.length + ' item(s) to ' + newOwner + '?')) return;
+    els.scanBtn.disabled = true;
+    els.commitBtn.disabled = true;
+    setStatus('Committing… (large jobs will resume via a time-driven trigger; you will receive an email report)');
+    google.script.run
+      .withSuccessHandler(onCommitSuccess)
+      .withFailureHandler(onCommitFailure)
+      .commitTransfer({
+        targetFolderId: (els.targetFolderId.value || '').trim(),
+        newOwnerEmail:  newOwner,
+        tree:           stripEls(state.tree),
+        selectedIds:    selected
+      });
+  }
+
+  function stripEls(node) {
+    var copy = {
+      id: node.id, name: node.name, path: node.path,
+      isFolder: node.isFolder, owner: node.owner,
+      mimeType: node.mimeType, transferable: node.transferable,
+      children: []
+    };
+    if (node.children) for (var i = 0; i < node.children.length; i++) copy.children.push(stripEls(node.children[i]));
+    return copy;
+  }
+
+  function onCommitSuccess(result) {
+    els.scanBtn.disabled = false;
+    els.commitBtn.disabled = false;
+    if (result && result.done) {
+      setStatus('Transfer complete. ' + result.processed + '/' + result.total + ' processed. Report emailed.', 'ok');
+    } else {
+      setStatus('Checkpoint saved. Processed ' + (result && result.processed) + '/' + (result && result.total) + '. Resume trigger scheduled — email will arrive on completion.', 'ok');
+    }
+  }
+  function onCommitFailure(err) {
+    els.scanBtn.disabled = false;
+    els.commitBtn.disabled = false;
+    setStatus('Commit failed: ' + (err && err.message ? err.message : err), 'error');
+  }
+})();
+</script>
