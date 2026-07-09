@@ -5,7 +5,6 @@
   var els = {
     targetFolderId:  document.getElementById('targetFolderId'),
     newOwnerEmail:   document.getElementById('newOwnerEmail'),
-    notifyNewOwner:  document.getElementById('notifyNewOwner'),
     loadBtn:         document.getElementById('loadBtn'),
     loadMyDriveBtn:  document.getElementById('loadMyDriveBtn'),
     previewBtn:      document.getElementById('previewBtn'),
@@ -595,14 +594,10 @@
       setStatus('Nothing selected — nothing to do.', 'error');
       return;
     }
-    var notify = !!els.notifyNewOwner.checked;
     var msg = 'Transfer ownership to ' + newOwner + '?\n\n' +
       recursiveIds.length + ' folder(s) will be transferred *with everything inside*.\n' +
       explicitIds.length  + ' individual item(s) will be transferred.\n\n' +
-      'Non-owned items in the walk will be skipped automatically.\n' +
-      (notify
-        ? 'Notification emails to ' + newOwner + ': ENABLED (one per item).'
-        : 'Notification emails to ' + newOwner + ': suppressed.');
+      'Non-owned items in the walk will be skipped automatically.';
     if (!confirm(msg)) return;
     els.loadBtn.disabled = true;
     els.commitBtn.disabled = true;
@@ -611,9 +606,8 @@
       .withSuccessHandler(onCommitSuccess)
       .withFailureHandler(onCommitFailure)
       .commitTransfer({
-        targetFolderId:  (els.targetFolderId.value || '').trim(),
-        newOwnerEmail:   newOwner,
-        notifyNewOwner:  notify,
+        targetFolderId: (els.targetFolderId.value || '').trim(),
+        newOwnerEmail:  newOwner,
         selection: {
           recursiveIds: recursiveIds,
           explicitIds:  explicitIds

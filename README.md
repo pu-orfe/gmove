@@ -295,19 +295,15 @@ to tear a specific one down.
   contained files. That way, if the run has to hand off to a resume trigger
   mid-batch, no orphaned file sits inside a still-old-owner folder for
   longer than necessary.
-- **Silent transfers, on by default.** `DriveApp.setOwner()` sends a
-  "You have been added as an owner" notification per item with no way to
-  opt out — a batch of hundreds of items carpets the new owner's inbox.
-  `attemptTransfer_` instead calls Drive REST API v3
-  (`POST /files/{id}/permissions` with `transferOwnership=true`) through
-  `UrlFetchApp` using the OAuth token Apps Script already holds. A
-  **Notify new owner by email** checkbox in the Configure section
-  controls the `sendNotificationEmail` query parameter — unchecked (the
-  default) means no mail per item; checked means one mail per item.
-  The flag is threaded through `state.notifyNewOwner` so a checkpointed
-  run's resume respects the choice you made when you clicked Confirm.
-  This uses the `script.external_request` scope — expect a one-time
-  re-authorization prompt on first commit.
+- **Silent transfers.** `DriveApp.setOwner()` sends a "You have been added
+  as an owner" notification per item with no way to opt out — a batch of
+  hundreds of items carpets the new owner's inbox. `attemptTransfer_`
+  instead calls Drive REST API v3 (`POST /files/{id}/permissions` with
+  `transferOwnership=true` and `sendNotificationEmail=false`) through
+  `UrlFetchApp` using the OAuth token Apps Script already holds. The new
+  owner sees the files appear silently in their Drive; no mail is sent.
+  This adds the `script.external_request` scope on first run — expect a
+  one-time re-authorization prompt.
 - **Batching.** Every ~4.5 minutes (see `TIME_BUDGET_MS` in `Logic.gs`) the
   server checkpoints the current state to `ScriptProperties` under key
   `gmove.state.v1` and schedules a one-shot time-driven trigger that calls

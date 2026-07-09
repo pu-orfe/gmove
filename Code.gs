@@ -331,14 +331,13 @@ function commitTransfer(payload) {
   var merged = built.merged;
 
   var state = {
-    targetFolderId:  (payload && payload.targetFolderId) || '',
-    newOwnerEmail:   newOwnerEmail,
-    notifyNewOwner:  !!(payload && payload.notifyNewOwner),
-    initiatorEmail:  built.activeUser,
-    startedAt:       new Date().toISOString(),
-    plan:            merged.plan,
-    cursor:          0,
-    log:             merged.preLogs.slice()
+    targetFolderId: (payload && payload.targetFolderId) || '',
+    newOwnerEmail: newOwnerEmail,
+    initiatorEmail: built.activeUser,
+    startedAt: new Date().toISOString(),
+    plan: merged.plan,
+    cursor: 0,
+    log: merged.preLogs.slice()
   };
 
   // Fail fast if the plan would blow the ScriptProperties quota. We check
@@ -452,7 +451,6 @@ function runBatch_() {
 
   var startedAtMs = Date.now();
   var newOwner = state.newOwnerEmail;
-  var notify = !!state.notifyNewOwner;
 
   while (state.cursor < state.plan.length) {
     if (shouldCheckpoint(startedAtMs, Date.now(), TIME_BUDGET_MS)) {
@@ -461,7 +459,7 @@ function runBatch_() {
       return { done: false, processed: state.cursor, total: state.plan.length };
     }
     var item = state.plan[state.cursor];
-    var entry = attemptTransfer_(item, newOwner, notify);
+    var entry = attemptTransfer_(item, newOwner);
     state.log.push(entry);
     state.cursor++;
   }
@@ -486,14 +484,12 @@ function runBatch_() {
  * elsewhere in this script), so there is no manifest change and no
  * re-authorization required.
  */
-function attemptTransfer_(item, newOwnerEmail, notify) {
-  var sendNotify = !!notify;
+function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
   try {
     var url = 'https://www.googleapis.com/drive/v3/files/' +
               encodeURIComponent(item.id) +
-              '/permissions?transferOwnership=true' +
-              '&sendNotificationEmail=' + (sendNotify ? 'true' : 'false');
+              '/permissions?transferOwnership=true&sendNotificationEmail=false';
     var response = UrlFetchApp.fetch(url, {
       method: 'post',
       contentType: 'application/json',
@@ -510,8 +506,7 @@ function attemptTransfer_(item, newOwnerEmail, notify) {
       return {
         timestamp: ts, id: item.id, name: item.name, path: item.path,
         status: STATUS.SUCCESS,
-        message: 'Transferred to ' + newOwnerEmail +
-          (sendNotify ? ' (notification email sent).' : ' (no notification email sent).')
+        message: 'Transferred to ' + newOwnerEmail + ' (no notification email sent).'
       };
     }
     return {
