@@ -11,9 +11,13 @@ fi
 
 if [[ ! -f .clasp.json ]]; then
   echo "No .clasp.json found. Run one of:"
-  echo "  clasp login && clasp create --title 'Drive Ownership Transfer' --type webapp --rootDir ."
-  echo "  # or for an existing project:"
+  echo "  clasp login && clasp create --title 'Drive Ownership Transfer' --rootDir ."
+  echo "  # or, for an existing project:"
   echo "  clasp login && clasp clone <SCRIPT_ID> --rootDir ."
+  echo ""
+  echo "Note: don't pass '--type webapp' — that isn't a valid clasp project"
+  echo "type. Web-app entry points are defined by the manifest's 'webapp'"
+  echo "block (already present in appsscript.json) and by 'clasp deploy'."
   exit 1
 fi
 

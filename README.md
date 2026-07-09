@@ -112,11 +112,17 @@ so no GCP project setup is needed and there's no consent-screen work.
 npm install -g @google/clasp
 clasp login                  # opens browser; log in as YOU (not a shared/service mailbox)
 open "https://script.google.com/home/usersettings"   # toggle Apps Script API → ON (per-user, once)
-clasp create --title "Drive Ownership Transfer" --type webapp --rootDir .
+clasp create --title "Drive Ownership Transfer" --rootDir .
 
 # Push and deploy
 ./deploy.sh
 ```
+
+> `clasp create` has no `webapp` project type — valid `--type` values are
+> `standalone` (default), `docs`, `sheets`, `slides`, `forms`, `api`.
+> "Web app" is an *entry point*, defined by the manifest's `webapp` block
+> (already present in `appsscript.json`) and published by `clasp deploy`.
+> If you pass `--type webapp` clasp errors with `Invalid container file type`.
 
 `deploy.sh` runs `clasp push -f` then `clasp deploy --description "…"`.
 Grab the resulting web-app URL from `clasp open` → **Deploy** →
