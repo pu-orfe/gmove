@@ -547,7 +547,25 @@ function resumeTransfer() {
   // path that creates them, and it keeps the "at most one" invariant. If
   // this handler ran because a scheduled trigger fired, that trigger is
   // already consumed.
-  runBatch_();
+  try {
+    runBatch_();
+  } catch (e) {
+    // Whatever went wrong, do NOT leave the job stranded. Log full stack
+    // for post-mortem, then schedule a retry so the next tick has a chance
+    // to succeed (e.g., after a transient PropertiesService blip).
+    var msg = e && e.message ? e.message : String(e);
+    var stack = e && e.stack ? e.stack : '(no stack)';
+    console.error('gmove: resumeTransfer runBatch_ threw: ' + msg + '\n' + stack);
+    try {
+      ensureResumeTrigger_(60 * 1000);
+      console.info('gmove: scheduled retry trigger 60s out after runBatch_ failure.');
+    } catch (e2) {
+      console.error('gmove: failed to schedule retry: ' + (e2 && e2.message ? e2.message : e2));
+    }
+    // Re-throw so the Executions view shows Failed with the real error,
+    // rather than a silent Completed that hides the problem.
+    throw e;
+  }
 }
 
 // ---------- Diagnostics (run from the editor Run menu) ---------------------
