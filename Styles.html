@@ -446,6 +446,21 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
 @media (prefers-reduced-motion: reduce) {
   .pt-node__toggle--loading { animation: none; border-top-color: var(--color-brand-70); }
 }
+.pt-btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--color-white);
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation: pt-spin 0.7s linear infinite;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pt-btn-spinner { animation: none; border-top-color: var(--color-white); }
+}
 .pt-node__icon { width: 16px; text-align: center; }
 .pt-node__label { flex: 1 1 auto; }
 .pt-node__label--folder { font-weight: var(--font-weight-semibold); }

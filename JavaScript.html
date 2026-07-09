@@ -392,6 +392,13 @@
     els.status.className = 'pt-status' + (kind ? ' pt-status--' + kind : '');
   }
 
+  function setMyDriveLoading(isLoading) {
+    var spinner = els.loadMyDriveBtn.querySelector('.pt-btn-spinner');
+    if (spinner) {
+      spinner.hidden = !isLoading;
+    }
+  }
+
   function escapeHtmlText(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -458,6 +465,7 @@
   }
 
   function onLoadMyDrive() {
+    setMyDriveLoading(true);
     els.loadMyDriveBtn.disabled = true;
     setStatus('Fetching My Drive root…');
     google.script.run
@@ -466,10 +474,10 @@
         // and can copy it if they want to bookmark or share it.
         els.targetFolderId.value = root.id;
         els.advancedLoad.open = false;
-        els.loadMyDriveBtn.disabled = false;
         loadRoot(root.id);
       })
       .withFailureHandler(function (err) {
+        setMyDriveLoading(false);
         els.loadMyDriveBtn.disabled = false;
         setStatus('Could not open My Drive: ' + errMsg(err), 'error');
       })
@@ -484,12 +492,14 @@
       .withSuccessHandler(function (result) {
         onBrowseSuccess(result, /*isRoot*/true);
         els.loadBtn.disabled = false;
+        setMyDriveLoading(false);
         els.loadMyDriveBtn.disabled = false;
         els.commitBtn.disabled = false;
         setStatus('Loaded ' + result.node.name + '. Click ▸ to expand a folder. Active user: ' + result.activeUserEmail, 'ok');
       })
       .withFailureHandler(function (err) {
         els.loadBtn.disabled = false;
+        setMyDriveLoading(false);
         els.loadMyDriveBtn.disabled = false;
         setStatus('Load failed: ' + errMsg(err), 'error');
       })
