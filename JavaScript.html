@@ -223,16 +223,16 @@
   function actionsBlock(job) {
     var wrap = document.createElement('div');
     wrap.className = 'pt-queue-card__actions';
-    var canKick = (job.status === 'running' || job.status === 'report_pending');
-    var kickBtn = document.createElement('button');
-    kickBtn.type = 'button';
-    kickBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
-    kickBtn.textContent = 'Kick';
-    kickBtn.title = canKick
+    var canNudge = (job.status === 'running' || job.status === 'report_pending');
+    var nudgeBtn = document.createElement('button');
+    nudgeBtn.type = 'button';
+    nudgeBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
+    nudgeBtn.textContent = 'Nudge';
+    nudgeBtn.title = canNudge
       ? 'Force runBatch_ NOW rather than wait for the resume trigger or 90s auto-nudge.'
-      : 'Only running or report_pending jobs can be kicked directly.';
-    kickBtn.disabled = !canKick;
-    kickBtn.addEventListener('click', function () { kickJob(job, kickBtn); });
+      : 'Only running or report_pending jobs can be nudged directly.';
+    nudgeBtn.disabled = !canNudge;
+    nudgeBtn.addEventListener('click', function () { nudgeJob(job, nudgeBtn); });
 
     var cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
@@ -241,18 +241,18 @@
     cancelBtn.title = 'Drop this job from the queue. Items already transferred stay transferred.';
     cancelBtn.addEventListener('click', function () { cancelJob(job, cancelBtn); });
 
-    wrap.appendChild(kickBtn);
+    wrap.appendChild(nudgeBtn);
     wrap.appendChild(cancelBtn);
     return wrap;
   }
 
-  function kickJob(job, btn) {
+  function nudgeJob(job, btn) {
     btn.disabled = true;
     var originalLabel = btn.textContent;
-    btn.textContent = 'Kicking…';
-    setStatus('Kicking job ' + (job.jobId || '').slice(0, 8) + '…');
+    btn.textContent = 'Nudging…';
+    setStatus('Nudging job ' + (job.jobId || '').slice(0, 8) + '…');
     // Reset the client-side auto-nudge cooldown so a follow-on auto poll
-    // will re-fire if this kick doesn't fully drain the job.
+    // will re-fire if this nudge doesn't fully drain the job.
     lastAutoNudgeAt = 0;
     google.script.run
       .withSuccessHandler(function (result) {
@@ -268,14 +268,14 @@
         } else {
           tail = ' → ' + JSON.stringify(result);
         }
-        setStatus('Kick returned' + tail, 'ok');
+        setStatus('Nudge returned' + tail, 'ok');
         fetchQueue(true);
       })
       .withFailureHandler(function (err) {
         btn.textContent = originalLabel;
         btn.disabled = false;
-        setStatus('Kick failed: ' + errMsg(err), 'error');
-        showAlertDialog('Could not kick transfer', errMsg(err));
+        setStatus('Nudge failed: ' + errMsg(err), 'error');
+        showAlertDialog('Could not nudge transfer', errMsg(err));
         // Even on failure, refresh — the server may have written a lastError
         // to the meta which we want visible.
         fetchQueue(true);
@@ -381,7 +381,7 @@
 
   // ---- Status helpers -----------------------------------------------------
   function setStatus(msg, kind) {
-    els.status.textContent = msg || '';
+    els.status.innerHTML = msg || '';
     els.status.className = 'pt-status' + (kind ? ' pt-status--' + kind : '');
   }
 
@@ -1036,15 +1036,15 @@
     els.loadBtn.disabled = true;
     els.loadMyDriveBtn.disabled = true;
     els.commitBtn.disabled = true;
-    setStatus('Committing… large jobs will resume via a time-driven trigger; you will receive an email report.');
-    // Start polling the queue right away so the in-progress sidebar reflects
-    // real progress during the sync commit call (which can run several
-    // minutes for a large selection). Without this, the client sits on an
-    // empty queue until commitTransfer returns.
+    setStatus('<span class="pt-preview-inline__spinner" style="vertical-align:middle; margin-right:8px; width:14px; height:14px;"></span>Please wait for the transfer to show as in-progress.  Gathering all file information now.');
+    // Start polling and refreshing the queue shortly after initiation so the user sees the new job asap
     setTimeout(function () {
       fetchQueue(false);
       scheduleQueuePoll();
-    }, 2000);
+    }, 500);
+    setTimeout(function () {
+      fetchQueue(false);
+    }, 2500);
     google.script.run
       .withSuccessHandler(onCommitSuccess)
       .withFailureHandler(onCommitFailure)
@@ -1077,13 +1077,8 @@
         'ok'
       );
     } else {
-      // Still in flight — checkpointed part-way and handed off to the resume trigger.
-      var progress = (result && typeof result.processed === 'number' && result.total)
-        ? (' Progress at hand-off: ' + result.processed + '/' + result.total + '.')
-        : '';
       setStatus(
-        'Job started; checkpointed and handed off to the resume trigger.' + progress +
-        ' Watch In-progress Transfers for progress. You will get an email when it completes.',
+        'Lastest transfer is still in progress.  You will receive a summary email when complete.',
         'ok'
       );
     }
