@@ -442,6 +442,60 @@ function commitTransfer(payload) {
 }
 
 /**
+ * Cancel a single job by id. Drops its registry entry and per-job state
+ * key so `runBatch_` will never touch it again. Does NOT undo any Drive
+ * ownership changes that already went through — cancellation is about the
+ * TRACKING state, not the effect on Drive. If the job had already
+ * transferred N items, those N are transferred; cancellation only stops
+ * the remaining items from being attempted.
+ *
+ * Any allowlisted user can cancel any job. This is a small trusted team
+ * (three users on the allowlist) and the queue view is already shared —
+ * gating cancellation to just the initiator would surprise users who see
+ * a stuck job in the queue and want to unstick it.
+ */
+function cancelJob(jobId) {
+  assertAuthorized_();
+  if (!jobId) throw new Error('jobId is required.');
+  var caller = getActiveUserEmail();
+  var result = withScriptLock_(function () {
+    var registry = loadJobsRegistry_();
+    var job = null;
+    for (var i = 0; i < registry.length; i++) {
+      if (registry[i].jobId === jobId) { job = registry[i]; break; }
+    }
+    if (!job) {
+      return { cancelled: false, reason: 'job not in registry (already completed or already cancelled)' };
+    }
+    var wasStatus = job.status;
+    var wasProcessed = job.processed || 0;
+    var wasTotal = job.total || 0;
+    removeJobFromRegistry_(jobId);
+    deleteJobState_(jobId);
+    console.warn('gmove: cancelJob by ' + (caller || '(unknown)') + ' — ' + JSON.stringify({
+      jobId: jobId,
+      initiator: job.initiator,
+      newOwnerEmail: job.newOwnerEmail,
+      priorStatus: wasStatus,
+      processed: wasProcessed,
+      total: wasTotal
+    }));
+    // If we just cancelled the running job, the resume trigger cycle will
+    // still fire and pick up whatever is next in the registry. Nothing to
+    // clean up on the trigger side — ensureResumeTrigger_ is idempotent.
+    return {
+      cancelled: true,
+      jobId: jobId,
+      initiator: job.initiator,
+      priorStatus: wasStatus,
+      processed: wasProcessed,
+      total: wasTotal
+    };
+  });
+  return result;
+}
+
+/**
  * Read-only snapshot of the current jobs registry for the queue UI. Cached
  * for 2 seconds because pollers hit this every 8s and PropertiesService
  * reads are serialized script-wide. Writers invalidate the cache slot.

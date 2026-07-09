@@ -121,6 +121,7 @@
         '<th>Progress</th>' +
         '<th>Started</th>' +
         '<th>Status</th>' +
+        '<th></th>' +
       '</tr>';
     table.appendChild(thead);
     var tbody = document.createElement('tbody');
@@ -146,7 +147,53 @@
     tr.appendChild(progressCell(job.processed || 0, job.total || 0));
     tr.appendChild(cell(shortTime(job.startedAt)));
     tr.appendChild(statusPillCell(job.status));
+    tr.appendChild(cancelCell(job));
     return tr;
+  }
+
+  function cancelCell(job) {
+    var td = document.createElement('td');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pt-btn pt-btn--outline pt-btn--small';
+    btn.textContent = 'Cancel';
+    btn.title = 'Drop this job from the queue. Items already transferred stay transferred.';
+    btn.addEventListener('click', function () { cancelJob(job, btn); });
+    td.appendChild(btn);
+    return td;
+  }
+
+  function cancelJob(job, btn) {
+    var done = job.processed || 0;
+    var total = job.total || 0;
+    var msg = 'Cancel this job?\n\n' +
+      'Initiator: ' + (job.initiator || '—') + '\n' +
+      'New owner: ' + (job.newOwnerEmail || '—') + '\n' +
+      'Status: ' + (job.status || '—') + '\n' +
+      'Progress at cancel: ' + done + '/' + total + '\n\n' +
+      'The ' + done + ' item(s) already transferred will REMAIN transferred (Drive does not have an undo). ' +
+      'The remaining ' + Math.max(0, total - done) + ' will not be attempted.';
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    btn.textContent = 'Cancelling…';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        btn.textContent = 'Cancel';
+        btn.disabled = false;
+        if (result && result.cancelled) {
+          setStatus('Cancelled job ' + (result.jobId || '').slice(0, 8) + ' — ' +
+                    result.processed + '/' + result.total + ' had already transferred.', 'ok');
+        } else {
+          setStatus('Cancel failed: ' + (result && result.reason ? result.reason : 'unknown'), 'error');
+        }
+        fetchQueue(true);
+      })
+      .withFailureHandler(function (err) {
+        btn.textContent = 'Cancel';
+        btn.disabled = false;
+        setStatus('Cancel error: ' + errMsg(err), 'error');
+      })
+      .cancelJob(job.jobId);
   }
 
   function cell(text) {
