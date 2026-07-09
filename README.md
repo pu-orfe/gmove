@@ -262,6 +262,17 @@ to tear a specific one down.
   server), populates the target-folder-ID field with the returned id, and
   loads the tree from there. Shared drives are NOT reachable this way —
   a shared-drive folder ID still has to be pasted in manually.
+- **Preview / dry run.** After selecting anything, the **Preview transfer
+  (dry run)** button hits a read-only server RPC (`previewTransfer`) that
+  runs the exact same subtree walk and merge as the real commit would, but
+  persists nothing. The preview card shows how many items will transfer
+  (folders + files), how many will be skipped as not-owned, the serialized
+  state size (with a red warning if it exceeds the 400 KB ceiling that
+  would cause the real commit to reject), and two collapsible lists of the
+  actual items. Any selection change invalidates and hides the preview so
+  a stale plan can never be confused for the current one. Preview is
+  optional — you can still commit directly — but it's the explicit
+  Phase-1-dry-run affordance the original spec called for.
 - **"Folder → everything inside" invariant.** Picking a folder in the tree
   transfers every transferable file and subfolder inside it. Descendants
   visibly lock (checkbox forced on and disabled) so you cannot deselect a

@@ -7,6 +7,7 @@
     newOwnerEmail:   document.getElementById('newOwnerEmail'),
     loadBtn:         document.getElementById('loadBtn'),
     loadMyDriveBtn:  document.getElementById('loadMyDriveBtn'),
+    previewBtn:      document.getElementById('previewBtn'),
     commitBtn:       document.getElementById('commitBtn'),
     status:          document.getElementById('status'),
     treeCard:        document.getElementById('tree-card'),
@@ -15,7 +16,14 @@
     expandAllBtn:    document.getElementById('expandAllBtn'),
     collapseAllBtn:  document.getElementById('collapseAllBtn'),
     selectAllBtn:    document.getElementById('selectAllBtn'),
-    clearAllBtn:     document.getElementById('clearAllBtn')
+    clearAllBtn:     document.getElementById('clearAllBtn'),
+    previewCard:     document.getElementById('preview-card'),
+    previewSummary:  document.getElementById('preview-summary'),
+    previewPlanList: document.getElementById('preview-plan-list'),
+    previewSkipList: document.getElementById('preview-skip-list'),
+    previewPlanDetails: document.getElementById('preview-plan-details'),
+    previewSkipDetails: document.getElementById('preview-skip-details'),
+    closePreviewBtn: document.getElementById('closePreviewBtn')
   };
 
   // -------------------------------------------------------------------------
@@ -45,11 +53,13 @@
 
   els.loadBtn.addEventListener('click', onLoad);
   els.loadMyDriveBtn.addEventListener('click', onLoadMyDrive);
+  els.previewBtn.addEventListener('click', onPreview);
   els.commitBtn.addEventListener('click', onCommit);
   els.expandAllBtn.addEventListener('click', onExpandAllInView);
   els.collapseAllBtn.addEventListener('click', onCollapseAll);
   els.selectAllBtn.addEventListener('click', onSelectAllInView);
   els.clearAllBtn.addEventListener('click', onClearAll);
+  els.closePreviewBtn.addEventListener('click', hidePreview);
 
   // ---- Status helpers -----------------------------------------------------
   function setStatus(msg, kind) {
@@ -444,14 +454,126 @@
   function updateCounters() {
     var recCount = Object.keys(state.recursive).length;
     var expCount = Object.keys(state.explicit).length;
+    var hasSelection = recCount > 0 || expCount > 0;
     var text;
-    if (recCount === 0 && expCount === 0) {
+    if (!hasSelection) {
       text = 'Nothing selected.';
     } else {
       text = recCount + ' folder' + (recCount === 1 ? '' : 's') + ' recursive · ' +
              expCount + ' individual item' + (expCount === 1 ? '' : 's');
     }
     els.counters.textContent = text;
+    els.previewBtn.disabled = !hasSelection;
+    // Any selection change invalidates a prior preview — the plan it showed
+    // is no longer the plan the server would compute now.
+    hidePreview();
+  }
+
+  // ---- Preview (dry run) --------------------------------------------------
+  function onPreview() {
+    var recursiveIds = Object.keys(state.recursive);
+    var explicitIds  = Object.keys(state.explicit);
+    if (recursiveIds.length === 0 && explicitIds.length === 0) {
+      setStatus('Select at least one folder or file first.', 'error');
+      return;
+    }
+    els.previewBtn.disabled = true;
+    els.commitBtn.disabled = true;
+    setStatus('Walking selected subtrees…');
+    google.script.run
+      .withSuccessHandler(function (preview) {
+        renderPreview(preview);
+        els.previewBtn.disabled = false;
+        els.commitBtn.disabled = false;
+        setStatus('Preview ready. Nothing has been modified. Review below, then click Confirm to run.', 'ok');
+      })
+      .withFailureHandler(function (err) {
+        els.previewBtn.disabled = false;
+        els.commitBtn.disabled = false;
+        setStatus('Preview failed: ' + errMsg(err), 'error');
+      })
+      .previewTransfer({
+        targetFolderId: (els.targetFolderId.value || '').trim(),
+        selection: { recursiveIds: recursiveIds, explicitIds: explicitIds }
+      });
+  }
+
+  function renderPreview(preview) {
+    var s = preview.summary || {};
+    var overCap = s.overCap;
+
+    els.previewSummary.innerHTML = '';
+    var metrics = [
+      { label: 'Will transfer', value: s.willTransfer, kind: 'ok' },
+      { label: 'Folders',       value: s.folders,      kind: 'muted' },
+      { label: 'Files',         value: s.files,        kind: 'muted' },
+      { label: 'Will skip',     value: s.willSkip,     kind: (s.willSkip > 0 ? 'warn' : 'muted') },
+      { label: 'State size',    value: Math.round((s.stateBytes || 0) / 1024) + ' KB',
+                                kind: (overCap ? 'bad' : 'muted') }
+    ];
+    for (var i = 0; i < metrics.length; i++) els.previewSummary.appendChild(metricEl(metrics[i]));
+
+    if (overCap) {
+      var warn = document.createElement('p');
+      warn.className = 'pt-status pt-status--error';
+      warn.textContent = 'This plan is over the ' + Math.round((s.capBytes || 0) / 1024) +
+        ' KB ScriptProperties ceiling — commit would fail. Narrow the selection.';
+      els.previewSummary.appendChild(warn);
+    }
+
+    renderList(els.previewPlanList, preview.plan, preview.planTruncated, preview.previewCap, false);
+    renderList(els.previewSkipList, preview.skip, preview.skipTruncated, preview.previewCap, true);
+    els.previewPlanDetails.open = preview.plan.length > 0 && preview.plan.length <= 25;
+    els.previewSkipDetails.open = preview.skip.length > 0 && preview.skip.length <= 25;
+
+    els.previewCard.hidden = false;
+    els.previewCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function metricEl(m) {
+    var d = document.createElement('div');
+    d.className = 'pt-metric pt-metric--' + (m.kind || 'muted');
+    d.innerHTML = '<div class="pt-metric__label"></div><div class="pt-metric__value"></div>';
+    d.querySelector('.pt-metric__label').textContent = m.label;
+    d.querySelector('.pt-metric__value').textContent = String(m.value);
+    return d;
+  }
+
+  function renderList(ul, items, truncated, cap, showOwner) {
+    ul.innerHTML = '';
+    if (!items || items.length === 0) {
+      var empty = document.createElement('li');
+      empty.className = 'pt-preview-list__empty';
+      empty.textContent = 'None.';
+      ul.appendChild(empty);
+      return;
+    }
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var li = document.createElement('li');
+      var icon = it.isFolder ? '📁 ' : '📄 ';
+      var main = document.createElement('span');
+      main.className = 'pt-preview-list__path';
+      main.textContent = icon + (it.path || it.name || it.id);
+      li.appendChild(main);
+      if (showOwner && it.message) {
+        var owner = document.createElement('span');
+        owner.className = 'pt-preview-list__owner';
+        owner.textContent = ' — ' + it.message;
+        li.appendChild(owner);
+      }
+      ul.appendChild(li);
+    }
+    if (truncated) {
+      var more = document.createElement('li');
+      more.className = 'pt-preview-list__more';
+      more.textContent = 'Truncated at ' + cap + '. Real run will still process every item.';
+      ul.appendChild(more);
+    }
+  }
+
+  function hidePreview() {
+    els.previewCard.hidden = true;
   }
 
   // ---- Commit -------------------------------------------------------------

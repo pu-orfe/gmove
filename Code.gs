@@ -225,47 +225,62 @@ function safeOwnerEmail_(item) {
  * once a folder is in recursiveIds, every transferable descendant it
  * contains is in the plan.
  */
+/**
+ * Read-only preview of what commitTransfer would do given the current
+ * selection. Runs the same walk + merge as the real commit but persists
+ * nothing and transfers nothing. The client uses this as the explicit
+ * "Dry Run" phase: user sees counts + paths before authorizing the run.
+ */
+function previewTransfer(payload) {
+  assertAuthorized_();
+  var built = walkAndMerge_(payload);
+  var merged = built.merged;
+
+  var stateBytes = JSON.stringify({ plan: merged.plan, log: merged.preLogs }).length;
+  var overCap = stateBytes > MAX_STATE_BYTES;
+
+  var folders = 0, files = 0;
+  for (var i = 0; i < merged.plan.length; i++) {
+    if (merged.plan[i].isFolder) folders++; else files++;
+  }
+
+  // Cap the payload we send back to the client — a 5000-item plan does not
+  // need to round-trip in full for a preview. Summary counts always reflect
+  // the real totals.
+  var PREVIEW_CAP = 500;
+  var planPreview = merged.plan.slice(0, PREVIEW_CAP);
+  var skipPreview = merged.preLogs.slice(0, PREVIEW_CAP);
+
+  return {
+    summary: {
+      willTransfer: merged.plan.length,
+      willSkip:     merged.preLogs.length,
+      folders:      folders,
+      files:        files,
+      stateBytes:   stateBytes,
+      overCap:      overCap,
+      capBytes:     MAX_STATE_BYTES
+    },
+    plan:            planPreview,
+    planTruncated:   merged.plan.length > PREVIEW_CAP,
+    skip:            skipPreview,
+    skipTruncated:   merged.preLogs.length > PREVIEW_CAP,
+    previewCap:      PREVIEW_CAP
+  };
+}
+
 function commitTransfer(payload) {
   assertAuthorized_();
-  if (!payload) throw new Error('Missing payload.');
-  var newOwnerEmail = String(payload.newOwnerEmail || '').trim();
+  var newOwnerEmail = String((payload && payload.newOwnerEmail) || '').trim();
   if (!newOwnerEmail) throw new Error('New owner email is required.');
-  var selection = payload.selection || {};
-  var recursiveIds = selection.recursiveIds || [];
-  var explicitIds  = selection.explicitIds  || [];
-  if (!recursiveIds.length && !explicitIds.length) {
-    throw new Error('No items selected.');
-  }
 
-  var activeUser = getActiveUserEmail();
-
-  // Walk each recursive folder into a subtree the pure merger can consume.
-  var recursiveTrees = [];
-  for (var i = 0; i < recursiveIds.length; i++) {
-    var rid = recursiveIds[i];
-    var f;
-    try { f = DriveApp.getFolderById(rid); }
-    catch (e) { throw new Error('Cannot access folder ' + rid + ': ' + e.message); }
-    recursiveTrees.push(walkFullTree_(f, ''));
-  }
-
-  // Resolve explicit ids into flat records. Skip any id that cannot be opened.
-  var explicitItems = [];
-  for (var j = 0; j < explicitIds.length; j++) {
-    var it = resolveItem_(explicitIds[j]);
-    if (it) explicitItems.push(it);
-  }
-
-  var merged = mergeSelection({
-    recursiveTrees: recursiveTrees,
-    explicitItems: explicitItems,
-    activeUserEmail: activeUser
-  });
+  var built = walkAndMerge_(payload);
+  var merged = built.merged;
 
   var state = {
-    targetFolderId: payload.targetFolderId || '',
+    targetFolderId: (payload && payload.targetFolderId) || '',
     newOwnerEmail: newOwnerEmail,
-    initiatorEmail: activeUser,
+    initiatorEmail: built.activeUser,
     startedAt: new Date().toISOString(),
     plan: merged.plan,
     cursor: 0,
@@ -286,6 +301,42 @@ function commitTransfer(payload) {
   saveState_(state);
   clearResumeTriggers_();
   return runBatch_();
+}
+
+/**
+ * Shared walk + merge used by both previewTransfer and commitTransfer so
+ * the preview cannot drift out of sync with what the real run would do.
+ * Does no persistence or authorization; callers must gate.
+ */
+function walkAndMerge_(payload) {
+  if (!payload) throw new Error('Missing payload.');
+  var selection = payload.selection || {};
+  var recursiveIds = selection.recursiveIds || [];
+  var explicitIds  = selection.explicitIds  || [];
+  if (!recursiveIds.length && !explicitIds.length) {
+    throw new Error('No items selected.');
+  }
+  var activeUser = getActiveUserEmail();
+
+  var recursiveTrees = [];
+  for (var i = 0; i < recursiveIds.length; i++) {
+    var rid = recursiveIds[i];
+    var f;
+    try { f = DriveApp.getFolderById(rid); }
+    catch (e) { throw new Error('Cannot access folder ' + rid + ': ' + e.message); }
+    recursiveTrees.push(walkFullTree_(f, ''));
+  }
+  var explicitItems = [];
+  for (var j = 0; j < explicitIds.length; j++) {
+    var it = resolveItem_(explicitIds[j]);
+    if (it) explicitItems.push(it);
+  }
+  var merged = mergeSelection({
+    recursiveTrees: recursiveTrees,
+    explicitItems: explicitItems,
+    activeUserEmail: activeUser
+  });
+  return { merged: merged, activeUser: activeUser };
 }
 
 function walkFullTree_(folder, parentPath) {

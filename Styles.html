@@ -486,6 +486,96 @@ a:focus-visible { outline: 2px solid var(--color-focus-outline); outline-offset:
   border-bottom: 1px solid var(--color-neutral-10);
 }
 
+.pt-actions-sep {
+  color: var(--color-neutral-20);
+  font-weight: bold;
+  align-self: center;
+  padding: 0 var(--space-1);
+}
+
+/* Preview / dry-run card ---------------------------------------------------
+   Rendered after the tree once the user clicks "Preview transfer". Summary
+   metrics up top, then two collapsible <details> blocks: items that will
+   transfer, items that will be skipped. */
+.pt-preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-4);
+}
+.pt-metric {
+  min-width: 8rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-neutral-10);
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-5);
+}
+.pt-metric__label {
+  font-family: var(--font-label);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-neutral-60);
+}
+.pt-metric__value {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-neutral-100);
+  margin-top: var(--space-1);
+}
+.pt-metric--ok    { background: var(--color-brand-10);   border-color: var(--color-brand-20); }
+.pt-metric--ok    .pt-metric__value { color: var(--color-brand-90); }
+.pt-metric--warn  { background: var(--color-neutral-5);  }
+.pt-metric--warn  .pt-metric__value { color: var(--color-brand-80); }
+.pt-metric--bad   { background: #ffebee; border-color: #ffcdd2; }
+.pt-metric--bad   .pt-metric__value { color: #c62828; }
+.pt-metric--muted { }
+
+.pt-preview-details {
+  border-top: 1px solid var(--color-neutral-10);
+  padding: var(--space-3) 0;
+}
+.pt-preview-details > summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-md);
+  color: var(--color-neutral-100);
+  padding: var(--space-2) 0;
+  list-style-position: outside;
+}
+.pt-preview-details > summary:hover { color: var(--color-brand-80); }
+
+.pt-preview-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-neutral-10);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+}
+.pt-preview-list li {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-neutral-10);
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-85);
+  overflow-wrap: anywhere;
+}
+.pt-preview-list li:last-child { border-bottom: none; }
+.pt-preview-list__path { }
+.pt-preview-list__owner { color: var(--color-neutral-60); font-style: italic; }
+.pt-preview-list__empty { color: var(--color-neutral-60); font-style: italic; }
+.pt-preview-list__more {
+  color: var(--color-brand-80);
+  background: var(--color-brand-10);
+  font-weight: var(--font-weight-semibold);
+}
+
 /* Unauthorized page — rendered by renderUnauthorized_() when a princeton.edu
    user hits the URL but is not on the allowlist. Same tokens, no header
    chrome, single-column layout. */
