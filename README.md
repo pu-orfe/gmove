@@ -222,12 +222,21 @@ gws script projects deployments delete \
 ### 2c. Iterating
 
 ```sh
-./update.sh
+./update.sh                # tests → push → update the current deployment IN PLACE
+./update.sh --fresh        # tests → teardown all → deploy a new version (new URL)
+./update.sh --skip-tests   # skip the Docker test step (for tight iteration)
+GMOVE_CLI=gws ./update.sh  # use gws instead of clasp (requires §2b setup)
 ```
 
-Rebuilds the Docker test image, runs the tests, then re-pushes and
-re-deploys via `deploy.sh` (clasp) by default. Set `GMOVE_CLI=gws` to use
-the gws path — only do so once §2b has been fully satisfied.
+Default `./update.sh` keeps the deployment URL stable — it detects the
+existing highest-numbered deployment (via `clasp deployments`) and calls
+`clasp deploy --deploymentId <id>` to update it in place. Anyone you have
+already shared the URL with keeps working after each update.
+
+`--fresh` is the "start over" mode: it runs `./teardown.sh --yes` (which
+undeploys everything) and then `./deploy.sh` (which creates a brand-new
+versioned deployment with a new URL). Use it after a manifest change that
+you want to be certain shipped, or when cleaning up an experiment.
 
 ### 2d. Undeploying (clasp path)
 
