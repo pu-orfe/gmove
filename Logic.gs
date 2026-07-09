@@ -441,6 +441,28 @@ function joinPath(parent, name) {
 }
 
 /**
+ * Detect the specific Drive REST error that means "the ownership transfer
+ * actually happened, but Drive could not deliver the notification email
+ * for this item." This shows up when the same new owner has received a
+ * lot of notifications in a short window — Drive throttles the mailer,
+ * returns HTTP 400, but the permission is already written.
+ *
+ * We treat this as a SUCCESS in the report so the audit trail matches
+ * what actually happened in Drive; the message column carries a note so
+ * a human reader can still see which items had the notification skipped.
+ *
+ * Observed wording (2026-07):
+ *   "Sorry, the items were successfully shared but emails could not be
+ *    sent to <address>."
+ */
+function isDriveNotificationOnlyFailure(driveMessage) {
+  if (!driveMessage) return false;
+  var s = String(driveMessage).toLowerCase();
+  return s.indexOf('successfully shared') !== -1 &&
+         s.indexOf('emails could not be sent') !== -1;
+}
+
+/**
  * Remove any job whose status is 'done'. In the current deployment 'done'
  * jobs are pruned immediately by finalizeAndReport_, so this helper is a
  * defensive safeguard against a bug or a hand-edited registry — it should
@@ -506,6 +528,7 @@ if (typeof module !== 'undefined' && module.exports) {
     joinPath: joinPath,
     escapeHtml: escapeHtml,
     pruneJobsRegistry: pruneJobsRegistry,
-    pickNextJob: pickNextJob
+    pickNextJob: pickNextJob,
+    isDriveNotificationOnlyFailure: isDriveNotificationOnlyFailure
   };
 }

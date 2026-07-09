@@ -343,6 +343,18 @@ to tear a specific one down.
   status, the flag values sent, and the full Drive JSON response body.
   When a transfer fails, `clasp open-logs` gives you the exact reason
   Drive rejected it rather than a wrapped Apps Script exception.
+- **Notification-email throttle is not a real failure.** Drive limits how
+  many "You have been added as an owner" emails it will deliver to a
+  single recipient in a short window. When we cross that ceiling, the
+  API returns HTTP 400 with the message *"Sorry, the items were
+  successfully shared but emails could not be sent to <address>."* — but
+  the permission WAS written. `attemptTransfer_` matches that specific
+  message via `isDriveNotificationOnlyFailure()` (Logic.gs, tested) and
+  reclassifies the item as SUCCESS with a note in the message column,
+  and logs it to Stackdriver as `console.info` rather than
+  `console.error`. Nothing to do on the operator side — the transfer
+  happened; the new owner just missed the per-item notification for
+  those items.
 - **Batching.** Every ~4.5 minutes (see `TIME_BUDGET_MS` in `Logic.gs`) the
   server checkpoints the current state to `ScriptProperties` under key
   `gmove.state.v1` and schedules a one-shot time-driven trigger that calls

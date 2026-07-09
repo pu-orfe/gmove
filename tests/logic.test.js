@@ -294,6 +294,23 @@ test('pickNextJob returns oldest queued when no job is running', () => {
   assert.equal(L.pickNextJob([newer, older]).jobId, 'b');
 });
 
+test('isDriveNotificationOnlyFailure recognizes the Drive rate-limited notification response', () => {
+  // Real message copied from Stackdriver logs.
+  const throttled = 'Sorry, the items were successfully shared but emails could not be sent to orfe-files@princeton.edu.';
+  assert.equal(L.isDriveNotificationOnlyFailure(throttled), true);
+  // Case-insensitive.
+  assert.equal(L.isDriveNotificationOnlyFailure(throttled.toUpperCase()), true);
+  // Genuine failures MUST NOT match.
+  assert.equal(L.isDriveNotificationOnlyFailure('The user does not have sufficient permissions for the item.'), false);
+  assert.equal(L.isDriveNotificationOnlyFailure('Cannot transfer ownership to a user outside of the domain.'), false);
+  assert.equal(L.isDriveNotificationOnlyFailure('Consent is required to transfer ownership.'), false);
+  // Only "successfully shared" alone is not enough — must also mention the mail failure.
+  assert.equal(L.isDriveNotificationOnlyFailure('The items were successfully shared.'), false);
+  assert.equal(L.isDriveNotificationOnlyFailure(''), false);
+  assert.equal(L.isDriveNotificationOnlyFailure(null), false);
+  assert.equal(L.isDriveNotificationOnlyFailure(undefined), false);
+});
+
 test('pickNextJob falls back to report_pending only when no queued/running exists', () => {
   const rp     = { jobId: 'a', status: 'report_pending', startedAt: '2026-01-01T00:00:00Z' };
   const queued = { jobId: 'b', status: 'queued',         startedAt: '2026-01-02T00:00:00Z' };

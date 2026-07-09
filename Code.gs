@@ -666,8 +666,26 @@ function attemptTransfer_(item, newOwnerEmail) {
           (moveToRoot ? ' (moved to their My Drive root).' : ' (kept in transferred subtree).')
       };
     }
-    // Non-2xx: log everything we know so a failure can be diagnosed after the fact.
+    // Non-2xx: extract Drive's message before deciding whether this is a real
+    // failure. Drive returns 400 with a very specific message when the
+    // ownership change actually succeeded but the notification email got
+    // rate-limited (common when the same new owner is on the receiving end
+    // of a large batch). Treat that case as SUCCESS with a note.
     var body = response.getContentText();
+    var driveMsg = extractDriveError_(body);
+    if (isDriveNotificationOnlyFailure(driveMsg)) {
+      console.info('gmove: notification email throttled but transfer succeeded: ' + JSON.stringify({
+        itemId: item.id, itemName: item.name, itemPath: item.path,
+        newOwner: newOwnerEmail
+      }));
+      return {
+        timestamp: ts, id: item.id, name: item.name, path: item.path,
+        status: STATUS.SUCCESS,
+        message: 'Transferred to ' + newOwnerEmail +
+          (moveToRoot ? ' (moved to their My Drive root).' : ' (kept in transferred subtree).') +
+          ' [Drive throttled the notification email; new owner will not receive one for this item.]'
+      };
+    }
     console.error('gmove transfer failed: ' + JSON.stringify({
       httpStatus: code,
       itemId: item.id,
@@ -681,7 +699,7 @@ function attemptTransfer_(item, newOwnerEmail) {
     return {
       timestamp: ts, id: item.id, name: item.name, path: item.path,
       status: STATUS.FAILED,
-      message: extractDriveError_(body) || ('Drive API HTTP ' + code)
+      message: driveMsg || ('Drive API HTTP ' + code)
     };
   } catch (e) {
     var errMsg = e && e.message ? e.message : String(e);
