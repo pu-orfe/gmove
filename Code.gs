@@ -464,6 +464,21 @@ function commitTransfer(payload) {
       }
     }
   }
+
+  // Report whether the job finished within the sync call (registry entry
+  // gone) or is still in flight. The client uses `done` to switch its
+  // status message between "Transfer complete" and "Job started / running."
+  var finalRegistry = loadJobsRegistry_();
+  var stillThere = false;
+  var lastKnown = null;
+  for (var k = 0; k < finalRegistry.length; k++) {
+    if (finalRegistry[k].jobId === jobId) { stillThere = true; lastKnown = finalRegistry[k]; break; }
+  }
+  registered.done = !stillThere;
+  if (stillThere && lastKnown) {
+    registered.processed = lastKnown.processed || 0;
+    registered.total = lastKnown.total || 0;
+  }
   return registered;
 }
 

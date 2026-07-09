@@ -831,8 +831,25 @@
         'Queued behind ' + (result.ahead || 0) + ' other job(s). It will start as soon as the current one finishes; ' +
         'you will get an email when yours completes. Watch the Job queue at the top for progress.', 'ok'
       );
+    } else if (result && result.done) {
+      // Job ran to completion inside commitTransfer — no need to wait or
+      // watch the queue. Email reports were sent to the initiator and the
+      // new owner.
+      setStatus(
+        'Transfer complete. All items processed inside this call — no queue entry needed. ' +
+        'Check your inbox for the completion report and (if you were the new owner) the summary.',
+        'ok'
+      );
     } else {
-      setStatus('Job started. Progress will appear in the Job queue at the top. You will get an email when it completes.', 'ok');
+      // Still in flight — checkpointed part-way and handed off to the resume trigger.
+      var progress = (result && typeof result.processed === 'number' && result.total)
+        ? (' Progress at hand-off: ' + result.processed + '/' + result.total + '.')
+        : '';
+      setStatus(
+        'Job started; checkpointed and handed off to the resume trigger.' + progress +
+        ' Watch the Job queue at the top for progress. You will get an email when it completes.',
+        'ok'
+      );
     }
     fetchQueue(false);
   }
