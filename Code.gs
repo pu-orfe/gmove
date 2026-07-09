@@ -102,6 +102,27 @@ function assertAuthorized_() {
   }
 }
 
+/**
+ * Looser guard for editor-manual diagnostic functions. When called from the
+ * Apps Script editor's function picker (Run menu), Session.getActiveUser
+ * usually returns the script owner's email; from google.script.run it
+ * returns the client's email. Either path is fine as long as the email
+ * is on the allowlist. If getActiveUser returns nothing (rare — happens
+ * in some trigger contexts), fall back to allowing execution since only
+ * the script owner can reach the editor at all.
+ */
+function assertAuthorizedForDiagnostics_() {
+  var email = getActiveUserEmail();
+  if (!email) return;
+  if (!isAllowedUser_(email)) {
+    console.warn('gmove: rejected diagnostic access attempt by ' + email);
+    throw new Error(
+      'You are not on the Drive Ownership Transfer access list. Contact ' +
+      SETTINGS.SUPPORT_CONTACT + ' to request access.'
+    );
+  }
+}
+
 // ---------- Web UI ---------------------------------------------------------
 
 function doGet() {
@@ -527,6 +548,113 @@ function resumeTransfer() {
   // this handler ran because a scheduled trigger fired, that trigger is
   // already consumed.
   runBatch_();
+}
+
+// ---------- Diagnostics (run from the editor Run menu) ---------------------
+
+/**
+ * Snapshot every piece of state runBatch_ / the queue view care about, so
+ * an operator can tell from the Apps Script editor whether a job is
+ * running, stuck, or gone. Run from the editor Function dropdown → Run.
+ * The return value shows in the Executions view; the JSON body also lands
+ * in console.info so it stays in the log stream.
+ */
+function debugState() {
+  assertAuthorizedForDiagnostics_();
+  var props = PropertiesService.getScriptProperties();
+  var registry = loadJobsRegistry_();
+  var allKeys = props.getKeys();
+  var stateKeys = [];
+  for (var i = 0; i < allKeys.length; i++) {
+    if (allKeys[i].indexOf(PROP_STATE_PREFIX) === 0) stateKeys.push(allKeys[i]);
+  }
+  var registryIds = {};
+  for (var j = 0; j < registry.length; j++) registryIds[registry[j].jobId] = true;
+  var orphanStateKeys = [];
+  for (var k = 0; k < stateKeys.length; k++) {
+    var jobId = stateKeys[k].substring(PROP_STATE_PREFIX.length);
+    if (!registryIds[jobId]) orphanStateKeys.push(stateKeys[k]);
+  }
+  var triggers = ScriptApp.getProjectTriggers();
+  var resumeTriggers = [];
+  for (var t = 0; t < triggers.length; t++) {
+    if (triggers[t].getHandlerFunction() === RESUME_TRIGGER_HANDLER) {
+      resumeTriggers.push({
+        handler: triggers[t].getHandlerFunction(),
+        source: String(triggers[t].getTriggerSource()),
+        uniqueId: triggers[t].getUniqueId()
+      });
+    }
+  }
+  var out = {
+    now: new Date().toISOString(),
+    activeUser: getActiveUserEmail() || '(none — script owner context)',
+    registry: registry.map(function (row) {
+      return {
+        jobId: row.jobId,
+        status: row.status,
+        initiator: row.initiator,
+        newOwnerEmail: row.newOwnerEmail,
+        processed: row.processed,
+        total: row.total,
+        startedAt: row.startedAt,
+        checkpointedAt: row.checkpointedAt,
+        hasStateKey: registryIds[row.jobId] && stateKeys.indexOf(PROP_STATE_PREFIX + row.jobId) !== -1
+      };
+    }),
+    orphanStateKeys: orphanStateKeys,
+    resumeTriggerCount: resumeTriggers.length,
+    resumeTriggers: resumeTriggers,
+    legacyStatePresent: !!props.getProperty(PROP_STATE_KEY_LEGACY)
+  };
+  console.info('gmove debugState: ' + JSON.stringify(out));
+  return out;
+}
+
+/**
+ * Manually kick the batch runner. Use when debugState() shows a running
+ * job but no resume trigger, or when a trigger appears to have died. Safe
+ * to call any time — if nothing is pending it returns immediately. Runs
+ * synchronously and processes up to one batch of the current job before
+ * returning.
+ */
+function nudgeResume() {
+  assertAuthorizedForDiagnostics_();
+  console.info('gmove nudgeResume: manual invocation by ' + (getActiveUserEmail() || '(script owner)'));
+  return runBatch_();
+}
+
+/**
+ * DANGEROUS — wipes the entire jobs registry and all per-job state keys,
+ * and drops every resume trigger. Only run if debugState() shows a
+ * corrupted or clearly-abandoned run that will not clear via nudgeResume.
+ * Does NOT undo any Drive changes; only the tracking state.
+ */
+function debugClearAllJobs() {
+  assertAuthorizedForDiagnostics_();
+  var props = PropertiesService.getScriptProperties();
+  var keys = props.getKeys();
+  var removed = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i] === PROP_REGISTRY_KEY ||
+        keys[i] === PROP_STATE_KEY_LEGACY ||
+        keys[i].indexOf(PROP_STATE_PREFIX) === 0) {
+      props.deleteProperty(keys[i]);
+      removed.push(keys[i]);
+    }
+  }
+  var triggers = ScriptApp.getProjectTriggers();
+  var droppedTriggers = 0;
+  for (var t = 0; t < triggers.length; t++) {
+    if (triggers[t].getHandlerFunction() === RESUME_TRIGGER_HANDLER) {
+      ScriptApp.deleteTrigger(triggers[t]);
+      droppedTriggers++;
+    }
+  }
+  invalidateRegistryCache_();
+  console.warn('gmove debugClearAllJobs: removed keys=' + JSON.stringify(removed) +
+               ' droppedTriggers=' + droppedTriggers);
+  return { removedKeys: removed, droppedTriggers: droppedTriggers };
 }
 
 /**

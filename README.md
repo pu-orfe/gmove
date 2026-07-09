@@ -448,8 +448,45 @@ bottom of the file consume tokens only and do not need to change.
 
 ## 7. Troubleshooting
 
+**Diagnostic surface.** `clasp open-logs` requires a properly-linked GCP
+project (see §2 verification checklist); if you never linked one, that
+command errors and you should ignore it. The primary surfaces are:
+
+- **Editor Executions tab.** `clasp open-script` → the clock icon in the
+  left sidebar. Every recent function invocation (including trigger-fired
+  `resumeTransfer` runs) shows here with its start time, duration, and
+  Completed/Failed/Running status. If you see `resumeTransfer` runs
+  ticking every ~5 minutes with Completed status, your batch is churning.
+- **Editor Triggers tab.** Same sidebar, next icon down. Shows every
+  scheduled trigger. During a run there should be exactly one
+  `resumeTransfer` trigger listed.
+- **In-editor logs.** Open `Code.gs`, click **Run** on any function, then
+  **View → Logs** to see recent `console.info`/`error` output. Diagnostic
+  functions below all log via `console`.
+
+**Diagnostic functions to run from the Apps Script editor** (Function
+dropdown → pick, then Run). All are also visible in the Function menu.
+
+- `debugState()` — dumps the jobs registry, per-job state key presence,
+  orphan state keys, resume-trigger count, and whether the legacy
+  `gmove.state.v1` key is lingering. Read-only. First thing to run if
+  the queue looks wrong.
+- `nudgeResume()` — synchronously invokes `runBatch_()`. Use when
+  `debugState()` shows a running job but no `resumeTransfer` trigger, or
+  when a trigger has died. Safe to call any time — no-op if nothing is
+  pending.
+- `debugClearAllJobs()` — nuclear option. Deletes the jobs registry, all
+  per-job state keys, and every `resumeTransfer` trigger. Does NOT undo
+  Drive changes; only clears tracking state. Use only if `debugState`
+  shows a fundamentally corrupted run that will not clear otherwise.
+
+**Common paths to look up:**
+
+- **Job stuck at 0/N** — the queue only updated `processed` at the 4.5-min
+  checkpoint until r16; from r16 forward it updates every 10 items.
+  On older code, `nudgeResume()` and watch the Executions view.
 - **"You do not have permission to call setOwner"** — the item is not
-  actually owned by the caller. The UI should already have flagged it as
+  actually owned by the caller. The UI should have flagged it as
   non-transferable; if it did not, re-scan (owner can change between
   scans).
 - **"Service invoked too many times in a short time"** — Drive quotas hit.
@@ -458,10 +495,9 @@ bottom of the file consume tokens only and do not need to change.
   before `shouldCheckpoint()` fires. Lower `TIME_BUDGET_MS` in `Logic.gs`
   (e.g. from 4.5 → 3.5 minutes) and re-deploy.
 - **No email arrived** — check the trigger list at `clasp open-script` →
-  **Triggers** (in clasp v3), or the editor's Triggers tab directly. If a
-  `resumeTransfer` trigger is still queued, the run is still in progress.
-  Stackdriver logs — `clasp open-logs` — will show any `MailApp.sendEmail`
-  failure.
+  **Triggers**. If a `resumeTransfer` trigger is queued, run is still in
+  progress. Otherwise run `debugState()`; if any job has status
+  `report_pending`, `nudgeResume()` will retry the mail send.
 
 ## 8. Notes
 
