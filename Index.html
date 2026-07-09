@@ -37,6 +37,9 @@
             <button class="pt-btn pt-btn--outline" id="previewBtn" type="button" disabled>Preview</button>
             <button class="pt-btn pt-btn--secondary" id="commitBtn" type="button" disabled>Confirm &amp; Transfer Ownership</button>
           </div>
+
+          <div id="preview-container" class="pt-preview-inline" hidden></div>
+
           <details class="pt-advanced" id="advanced-load">
             <summary>Advanced: open a folder by ID</summary>
             <div class="pt-advanced__body">
@@ -85,22 +88,6 @@
 
           <div id="counters" class="pt-counters"></div>
           <div id="tree" class="pt-tree" role="tree" aria-label="Drive tree"></div>
-        </section>
-
-        <section class="pt-surface pt-outline-light" id="preview-card" hidden style="margin-top:var(--space-8);">
-          <div class="pt-block-heading">
-            <h2>Preview</h2>
-            <button class="pt-btn pt-btn--outline" id="closePreviewBtn" type="button">Dismiss</button>
-          </div>
-          <div id="preview-summary" class="pt-preview-summary"></div>
-          <details class="pt-preview-details" id="preview-plan-details">
-            <summary>Items that WILL transfer</summary>
-            <ul class="pt-preview-list" id="preview-plan-list"></ul>
-          </details>
-          <details class="pt-preview-details" id="preview-skip-details">
-            <summary>Items that will be SKIPPED (not owned by you)</summary>
-            <ul class="pt-preview-list" id="preview-skip-list"></ul>
-          </details>
         </section>
       </div>
 

@@ -17,13 +17,7 @@
     tree:            document.getElementById('tree'),
     counters:        document.getElementById('counters'),
     selectAllToggle: document.getElementById('selectAllToggle'),
-    previewCard:     document.getElementById('preview-card'),
-    previewSummary:  document.getElementById('preview-summary'),
-    previewPlanList: document.getElementById('preview-plan-list'),
-    previewSkipList: document.getElementById('preview-skip-list'),
-    previewPlanDetails: document.getElementById('preview-plan-details'),
-    previewSkipDetails: document.getElementById('preview-skip-details'),
-    closePreviewBtn: document.getElementById('closePreviewBtn'),
+    previewContainer:document.getElementById('preview-container'),
     modalBackdrop:   document.getElementById('modalBackdrop'),
     modalTitle:      document.getElementById('modalTitle'),
     modalBody:       document.getElementById('modalBody'),
@@ -67,7 +61,6 @@
       onClearAll();
     }
   });
-  els.closePreviewBtn.addEventListener('click', hidePreview);
   els.refreshQueueBtn.addEventListener('click', function () { fetchQueue(true); });
 
   // ---- Queue poll ---------------------------------------------------------
@@ -877,7 +870,16 @@
     }
     els.previewBtn.disabled = true;
     els.commitBtn.disabled = true;
-    setStatus('Walking selected subtrees…');
+    
+    setStatus('');
+    
+    els.previewContainer.hidden = false;
+    els.previewContainer.innerHTML =
+      '<div class="pt-preview-inline__loading">' +
+        '<span class="pt-preview-inline__spinner"></span>' +
+        '<span>Summarizing ownership transfer...</span>' +
+      '</div>';
+      
     google.script.run
       .withSuccessHandler(function (preview) {
         renderPreview(preview);
@@ -891,12 +893,14 @@
         } else {
           tail = '';
         }
-        setStatus('Preview ready. Nothing has been modified.' + tail + ' Review below, then click Confirm to run.', 'ok');
+        setStatus('Preview ready. Nothing has been modified.' + tail, 'ok');
       })
       .withFailureHandler(function (err) {
         els.previewBtn.disabled = false;
         els.commitBtn.disabled = false;
+        hidePreview();
         setStatus('Preview failed: ' + errMsg(err), 'error');
+        showAlertDialog('Preview failed', errMsg(err));
       })
       .previewTransfer({
         targetFolderId: (els.targetFolderId.value || '').trim(),
@@ -907,49 +911,65 @@
   function renderPreview(preview) {
     var s = preview.summary || {};
     var overCap = s.overCap;
-
-    els.previewSummary.innerHTML = '';
-    var metrics = [
-      { label: 'Will transfer', value: s.willTransfer, kind: 'ok' },
-      { label: 'Folders',       value: s.folders,      kind: 'muted' },
-      { label: 'Files',         value: s.files,        kind: 'muted' },
-      { label: 'Will skip',     value: s.willSkip,     kind: (s.willSkip > 0 ? 'warn' : 'muted') },
-      { label: 'State size',    value: Math.round((s.stateBytes || 0) / 1024) + ' KB',
-                                kind: (overCap ? 'bad' : 'muted') }
-    ];
-    for (var i = 0; i < metrics.length; i++) els.previewSummary.appendChild(metricEl(metrics[i]));
-
+    
+    var html = '';
+    
     if (overCap) {
-      var warn = document.createElement('p');
-      warn.className = 'pt-status pt-status--error';
-      warn.textContent = 'This plan is over the ' + Math.round((s.capBytes || 0) / 1024) +
-        ' KB ScriptProperties ceiling — commit would fail. Narrow the selection.';
-      els.previewSummary.appendChild(warn);
+      html +=
+        '<div class="pt-status pt-status--error" style="margin-bottom:var(--space-3);">' +
+          'This plan (~' + Math.round((s.stateBytes || 0) / 1024) + ' KB) is over the ' +
+          Math.round((s.capBytes || 0) / 1024) + ' KB ScriptProperties ceiling. Commit would fail — narrow the selection.' +
+        '</div>';
     }
-
-    renderList(els.previewPlanList, preview.plan, preview.planTruncated, preview.previewCap, false);
-    renderList(els.previewSkipList, preview.skip, preview.skipTruncated, preview.previewCap, true);
-    els.previewPlanDetails.open = preview.plan.length > 0 && preview.plan.length <= 25;
-    els.previewSkipDetails.open = preview.skip.length > 0 && preview.skip.length <= 25;
-
-    els.previewCard.hidden = false;
-    els.previewCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    html +=
+      '<div class="pt-preview-inline__summary">' +
+        '<strong>Preview Summary:</strong><br>' +
+        'Will transfer: <strong>' + s.willTransfer + '</strong> (' + s.folders + ' folder' + (s.folders === 1 ? '' : 's') + ', ' + s.files + ' file' + (s.files === 1 ? '' : 's') + ') · ' +
+        'Will skip: <strong>' + s.willSkip + '</strong> · ' +
+        'State size: <strong>' + Math.round((s.stateBytes || 0) / 1024) + ' KB</strong>' +
+      '</div>';
+      
+    if (preview.plan && preview.plan.length > 0) {
+      html +=
+        '<details class="pt-preview-inline__details">' +
+          '<summary>Items that will transfer (' + preview.plan.length + (preview.planTruncated ? '+' : '') + ')</summary>' +
+          '<ul class="pt-preview-inline__list pt-preview-plan-list"></ul>' +
+        '</details>';
+    }
+    
+    if (preview.skip && preview.skip.length > 0) {
+      html +=
+        '<details class="pt-preview-inline__details">' +
+          '<summary>Items that will be skipped (' + preview.skip.length + (preview.skipTruncated ? '+' : '') + ')</summary>' +
+          '<ul class="pt-preview-inline__list pt-preview-skip-list"></ul>' +
+        '</details>';
+    }
+    
+    html += '<button class="pt-btn pt-btn--outline pt-btn--small" id="dismissPreviewBtn" type="button" style="margin-top:var(--space-3);">Dismiss Preview</button>';
+    
+    els.previewContainer.innerHTML = html;
+    
+    var planList = els.previewContainer.querySelector('.pt-preview-plan-list');
+    if (planList) {
+      renderInlineList(planList, preview.plan, preview.planTruncated, preview.previewCap, false);
+    }
+    var skipList = els.previewContainer.querySelector('.pt-preview-skip-list');
+    if (skipList) {
+      renderInlineList(skipList, preview.skip, preview.skipTruncated, preview.previewCap, true);
+    }
+    
+    var dismissBtn = els.previewContainer.querySelector('#dismissPreviewBtn');
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', hidePreview);
+    }
   }
 
-  function metricEl(m) {
-    var d = document.createElement('div');
-    d.className = 'pt-metric pt-metric--' + (m.kind || 'muted');
-    d.innerHTML = '<div class="pt-metric__label"></div><div class="pt-metric__value"></div>';
-    d.querySelector('.pt-metric__label').textContent = m.label;
-    d.querySelector('.pt-metric__value').textContent = String(m.value);
-    return d;
-  }
-
-  function renderList(ul, items, truncated, cap, showOwner) {
+  function renderInlineList(ul, items, truncated, cap, showOwner) {
     ul.innerHTML = '';
     if (!items || items.length === 0) {
       var empty = document.createElement('li');
-      empty.className = 'pt-preview-list__empty';
+      empty.className = 'pt-preview-inline__list-empty';
       empty.textContent = 'None.';
       ul.appendChild(empty);
       return;
@@ -959,12 +979,12 @@
       var li = document.createElement('li');
       var icon = it.isFolder ? '📁 ' : '📄 ';
       var main = document.createElement('span');
-      main.className = 'pt-preview-list__path';
       main.textContent = icon + (it.path || it.name || it.id);
       li.appendChild(main);
       if (showOwner && it.message) {
         var owner = document.createElement('span');
-        owner.className = 'pt-preview-list__owner';
+        owner.style.color = 'var(--color-neutral-60)';
+        owner.style.fontStyle = 'italic';
         owner.textContent = ' — ' + it.message;
         li.appendChild(owner);
       }
@@ -972,14 +992,15 @@
     }
     if (truncated) {
       var more = document.createElement('li');
-      more.className = 'pt-preview-list__more';
+      more.className = 'pt-preview-inline__list-more';
       more.textContent = 'Truncated at ' + cap + '. Real run will still process every item.';
       ul.appendChild(more);
     }
   }
 
   function hidePreview() {
-    els.previewCard.hidden = true;
+    els.previewContainer.hidden = true;
+    els.previewContainer.innerHTML = '';
   }
 
   // ---- Commit -------------------------------------------------------------
