@@ -338,18 +338,57 @@ with no active user.
 
 ## 5. OAuth scopes
 
-Declared in `appsscript.json`:
+Declared explicitly in `appsscript.json` — do NOT let a linter strip
+this block. If the manifest lacks `oauthScopes`, Apps Script auto-
+infers them from code usage on a per-user basis at consent time. That
+sounds fine but breaks stale returning users: a user who consented to
+an earlier version of the code never gets prompted to grant scopes the
+newer code needs. Explicit `oauthScopes` fixes this — Apps Script
+detects the scope-set change on deploy and prompts every user through
+a fresh consent flow on their next visit.
 
-- `.../auth/drive` — read metadata, call `setOwner`.
-- `.../auth/script.send_mail` — send the completion report via `MailApp`.
-- `.../auth/script.scriptapp` — create and delete resume triggers.
-- `.../auth/userinfo.email` — identify the initiator for the report.
-- `.../auth/script.container.ui` — HTML Service.
+Declared scopes:
+
+- `.../auth/drive` — read metadata, walk folders, call the
+  `permissions.create` REST endpoint via UrlFetchApp.
+- `.../auth/script.external_request` — `UrlFetchApp.fetch` to
+  `https://www.googleapis.com/drive/v3/files/…/permissions`. This is
+  the scope that was silently added when we moved off `DriveApp.setOwner`;
+  users who consented before that change hit
+  `"You do not have permission to call UrlFetchApp.fetch. Required
+   permissions: …/script.external_request"` at transfer time.
+- `.../auth/script.send_mail` — completion report + new-owner summary
+  via `MailApp`.
+- `.../auth/script.scriptapp` — `ScriptApp.newTrigger` for the resume-
+  batch time-driven trigger fallback.
+- `.../auth/userinfo.email` — `Session.getActiveUser().getEmail()`
+  identifies the caller for the allowlist check and the report.
 
 The web-app is configured `executeAs: USER_ACCESSING` and
-`access: DOMAIN` so that (a) each caller acts as themselves (`setOwner`
-only works when the active user owns the file) and (b) only members of
-your Workspace org can reach the URL.
+`access: DOMAIN` so that (a) each caller acts as themselves (transferring
+ownership only works when the caller owns the file) and (b) only members
+of your Workspace org can reach the URL.
+
+### Recovering a stale user
+
+If a returning user hits *"You do not have permission to call ..."* on
+any action, their OAuth grant is missing a scope the current code
+needs. Fastest recovery:
+
+1. Visit <https://myaccount.google.com/permissions>
+2. Find the app entry — usually labelled by the Apps Script project
+   title (e.g. **Drive Ownership Transfer**) or the linked GCP project
+   name.
+3. Click through → **Remove Access**.
+4. Return to the web-app URL. Google prompts for consent freshly,
+   including every scope declared in the current manifest.
+5. Approve → retry the failing action.
+
+Note: after a deploy that changes the manifest's `oauthScopes` list,
+Apps Script generally prompts existing users through a re-consent
+automatically on next visit. Manual revoke is only needed when the
+inferred-scopes path was used previously and the user's grant is
+frozen in an old state.
 
 ## 6. Theming
 
