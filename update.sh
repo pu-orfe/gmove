@@ -16,7 +16,6 @@
 #   ./update.sh --fresh      tear down ALL deployments then deploy a new one
 #                            (URL changes; use for "start over")
 #   ./update.sh --skip-tests skip the Docker test step
-#   GMOVE_CLI=gws ./update.sh  use gws instead of clasp (requires §2b setup)
 
 set -euo pipefail
 
@@ -38,16 +37,7 @@ else
   echo "[1/3] Skipping tests (--skip-tests)."
 fi
 
-CLI="${GMOVE_CLI:-clasp}"
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-# ---- gws path (advanced; see README §2b) -----------------------------------
-if [[ "$CLI" == "gws" ]]; then
-  echo "[2/3] Deploying via gws…"
-  ./deploy-gws.sh
-  echo "[3/3] Done."
-  exit 0
-fi
 
 # ---- clasp path ------------------------------------------------------------
 command -v clasp >/dev/null 2>&1 || { echo "clasp not on PATH." >&2; exit 1; }

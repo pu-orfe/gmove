@@ -19,7 +19,6 @@ docker-compose.*.yml
 
 # Deploy scripts and CI
 deploy.sh
-deploy-gws.sh
 update.sh
 teardown.sh
 .github/**
@@ -33,7 +32,6 @@ LICENSE
 .git/**
 .gitignore
 .clasp.json
-.gws.json
 .env
 .env.*
 .DS_Store

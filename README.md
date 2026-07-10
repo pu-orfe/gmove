@@ -32,8 +32,7 @@ gmove/
 │   └── package.json
 ├── Dockerfile              Alpine + Node 20 for containerized test runs
 ├── docker-compose.yml
-├── deploy.sh               macOS zsh: clasp login/create/push/deploy  ← default
-├── deploy-gws.sh           macOS zsh: googleworkspace-cli (gws) — alternative, see §2b
+├── deploy.sh               macOS zsh: clasp login/create/push/deploy
 ├── update.sh               tests → push → deploy
 └── teardown.sh             list / undeploy web-app versions
 ```
@@ -46,17 +45,9 @@ gmove/
   as `docker-compose` per project convention.
 - A Google Workspace account. Ownership transfer only works between accounts
   in the same organization.
-- **CLI to deploy** — `clasp` is the default. It uses Google's shared OAuth
+- **CLI to deploy** — `clasp`. It uses Google's shared OAuth
   client, which already includes the Apps Script scopes, so no GCP
-  project setup is required.
-    - `clasp` (default): `npm install -g @google/clasp` then `clasp login`.
-      See §2a.
-    - `googleworkspace-cli` (advanced, only if you're already running a
-      dedicated GCP project with the Apps Script API + scopes configured):
-      `brew install googleworkspace-cli jq` then `gws auth login`. See §2b
-      — there are real prerequisites; **do not use this path if your `gws`
-      auth is currently pointed at a project that doesn't cover Apps
-      Script**.
+  project setup is required. Run: `npm install -g @google/clasp` then `clasp login`.
 
 ## 1. Testing
 
@@ -101,8 +92,6 @@ done.
 
 ## 2. Deploy to Apps Script (production)
 
-### 2a. Deploy with `clasp` (default and recommended)
-
 `clasp` is Google's official Apps Script CLI. It authenticates against
 Google's own OAuth client, which already includes the Apps Script scopes,
 so no GCP project setup is needed and there's no consent-screen work.
@@ -144,88 +133,12 @@ Advanced Service. `clasp push` uploads the manifest verbatim, so this is
 handled — you do not need to open the Apps Script editor unless you want
 to.
 
-### 2b. Deploy with `googleworkspace-cli` (advanced — see prerequisites first)
-
-**Read this whole section before running `./deploy-gws.sh`.**
-
-`gws` is a general-purpose Workspace CLI and does **not** ship with a
-pre-configured OAuth client for Apps Script. It authenticates against
-whatever GCP project the local `client_secret.json` belongs to. If that
-project's OAuth consent screen doesn't include the Apps Script scopes,
-every `gws script projects …` call returns `403 insufficient_scope` after
-you log in — even though the login itself succeeds.
-
-**Common failure mode.** Running `gws auth login` when your local `gws`
-config points at an unrelated GCP project (a common example inside ORFE:
-`orfe-calendars-api`) will:
-
-- prompt you to sign in as the **shared/service mailbox** that owns the
-  project (`orfe-calendars@princeton.edu`, not you), and
-- issue a token that is missing `https://www.googleapis.com/auth/script.projects`
-  and `.../auth/script.deployments`.
-
-Both of those are unrecoverable with a second login. If you see the URL
-starting with `client_id=584162953183-…` when you run `gws auth login`,
-that is the `orfe-calendars-api` client — **Ctrl-C**. Do not proceed.
-
-**What you must provision before using this path:**
-
-1. A dedicated GCP project (or an existing one you're willing to modify).
-2. Apps Script API enabled on it:
-   ```sh
-   gcloud services enable script.googleapis.com --project=<PROJECT_ID>
-   ```
-3. `script.projects` and `script.deployments` scopes added to the OAuth
-   consent screen: GCP Console → APIs & Services → OAuth consent screen →
-   **Scopes** → **Add or Remove Scopes** → add both.
-4. `gws` pointed at *that* project, not a leftover one. The cleanest way:
-   ```sh
-   gws auth logout
-   gws auth setup --project <PROJECT_ID> --login
-   ```
-   `--login` runs `gws auth login` at the end.
-
-Once the project is set up, run:
-
-```sh
-brew install googleworkspace-cli jq
-./deploy-gws.sh
-```
-
-`deploy-gws.sh` runs a preflight check that verifies (a) `gws` is
-installed, (b) you're logged in, (c) the current token carries the
-`script.projects` and `script.deployments` scopes, and (d) `.gws.json`
-either exists or can be created. It refuses to touch the API if any of
-those fail, and prints exactly which of the steps above to run.
-
-The mechanics under the hood, after preflight:
-
-1. `gws script projects create --json '{"title":"Drive Ownership Transfer"}'`
-   — creates a standalone script project, writes the resulting `scriptId`
-   to `.gws.json` (git-ignored). Reused on subsequent runs.
-2. `gws script +push --script "$SCRIPT_ID" --dir .` — uploads every
-   `*.gs`, `*.html`, and `appsscript.json` in this directory.
-3. `gws script projects versions create` — cuts an immutable version.
-4. `gws script projects deployments create` — publishes the version as
-   a web-app. The response includes the `webApp.url`.
-
-To tear down a deployment:
-
-```sh
-SCRIPT_ID="$(jq -r .scriptId .gws.json)"
-gws script projects deployments list \
-  --params "{\"scriptId\":\"$SCRIPT_ID\"}" --format table
-gws script projects deployments delete \
-  --params "{\"scriptId\":\"$SCRIPT_ID\",\"deploymentId\":\"<id>\"}"
-```
-
-### 2c. Iterating
+### 2a. Iterating
 
 ```sh
 ./update.sh                # tests → push → update the current deployment IN PLACE
 ./update.sh --fresh        # tests → teardown all → deploy a new version (new URL)
 ./update.sh --skip-tests   # skip the Docker test step (for tight iteration)
-GMOVE_CLI=gws ./update.sh  # use gws instead of clasp (requires §2b setup)
 ```
 
 Default `./update.sh` keeps the deployment URL stable — it detects the
@@ -238,7 +151,7 @@ undeploys everything) and then `./deploy.sh` (which creates a brand-new
 versioned deployment with a new URL). Use it after a manifest change that
 you want to be certain shipped, or when cleaning up an experiment.
 
-### 2d. Undeploying (clasp path)
+### 2b. Undeploying
 
 ```sh
 ./teardown.sh
@@ -396,7 +309,7 @@ further to a named list of users; anyone else in the domain sees a
 
 The access list and support contact are configured via environment variables inside `.env` (locally) and GitHub repository secrets (in CI).
 
-At deployment time, the deployment scripts (`./deploy.sh`, `./update.sh`, or `./deploy-gws.sh`) read these environment variables and compile them into a `Config.gs` file, which is pushed to script.google.com but ignored by Git:
+At deployment time, the deployment scripts (`./deploy.sh` or `./update.sh`) read these environment variables and compile them into a `Config.gs` file, which is pushed to script.google.com but ignored by Git:
 
 ```javascript
 function initializeConfigProperties() {
@@ -503,11 +416,3 @@ dropdown → pick, then Run). All are also visible in the Function menu.
   **Triggers**. If a `resumeTransfer` trigger is queued, run is still in
   progress. Otherwise run `debugState()`; if any job has status
   `report_pending`, `nudgeResume()` will retry the mail send.
-
-## 8. Notes
-
-- `MEMORY.md`, `.claude/`, and `.env*` are git-ignored. Do not commit
-  agent-authored planning artifacts alongside the code.
-- The repo is public at [pu-orfe/gmove](https://github.com/pu-orfe/gmove);
-  the web-app is `access: DOMAIN` so publishing the source does not
-  expose the runtime.

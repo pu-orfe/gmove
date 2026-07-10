@@ -305,7 +305,7 @@ test('pickNextJob returns oldest queued when no job is running', () => {
 
 test('formatNewOwnerNotificationHtml lists only moveToRoot successes, links each to Drive', () => {
   const html = L.formatNewOwnerNotificationHtml({
-    initiatorEmail: 'bino@princeton.edu',
+    initiatorEmail: 'allowed-user1@princeton.edu',
     completedAt: '2026-07-09T18:00:00Z',
     log: [
       // A recursive-folder root — appears in the "items at root" table
@@ -324,7 +324,7 @@ test('formatNewOwnerNotificationHtml lists only moveToRoot successes, links each
   // Header count: 3 successes total.
   assert.match(html, /You now own 3 items/);
   // Initiator surfaced.
-  assert.match(html, /bino@princeton\.edu/);
+  assert.match(html, /allowed-user1@princeton\.edu/);
   // Metric block: 1 folder, 2 files, 2 root items.
   assert.match(html, />Total transferred<\/div><div[^>]*>3</);
   assert.match(html, />Folders<\/div><div[^>]*>1</);
@@ -380,7 +380,7 @@ test('formatNewOwnerNotificationHtml escapes hostile initiator and item names', 
 
 test('isDriveNotificationOnlyFailure recognizes the Drive rate-limited notification response', () => {
   // Real message copied from Stackdriver logs.
-  const throttled = 'Sorry, the items were successfully shared but emails could not be sent to orfe-files@princeton.edu.';
+  const throttled = 'Sorry, the items were successfully shared but emails could not be sent to allowed-user2@princeton.edu.';
   assert.equal(L.isDriveNotificationOnlyFailure(throttled), true);
   // Case-insensitive.
   assert.equal(L.isDriveNotificationOnlyFailure(throttled.toUpperCase()), true);

@@ -1,6 +1,5 @@
 # Apps Script deploy state (contains scriptId — safe-ish but tool-owned)
 .clasp.json
-.gws.json
 
 # Editor / OS junk
 .DS_Store
