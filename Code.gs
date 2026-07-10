@@ -735,6 +735,69 @@ function nudgeResume() {
 }
 
 /**
+ * Given a comma-, whitespace-, or newline-separated list of Drive file
+ * IDs, report each one's current location as seen by the caller. Useful
+ * after a failed run to figure out where items ended up: still in the
+ * original folder, moved somewhere else, trashed, orphaned (no parents),
+ * or genuinely unreachable.
+ *
+ * Runs read-only. Executes as the caller — so if you need to see where
+ * an item is from a specific user's perspective, run it from that user's
+ * session (either as a google.script.run RPC from their tab, or via
+ * `gws script run` under their auth).
+ *
+ * Returns an array of { id, name?, ownerEmail?, trashed?, parents?,
+ * error? } — one entry per input id. `parents` is an array of {id, name}
+ * for each parent folder the caller can see; an empty array means the
+ * item is orphaned (no parents in this user's view). `error` is set when
+ * the item can't be read at all.
+ */
+function debugLocateFiles(idsBlob) {
+  assertAuthorizedForDiagnostics_();
+  if (!idsBlob) throw new Error('debugLocateFiles requires an id list (comma / whitespace / newline separated).');
+  var ids = String(idsBlob)
+    .split(/[\s,]+/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+  var out = [];
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var entry = { id: id };
+    var handle = null;
+    var isFolder = false;
+    try { handle = DriveApp.getFolderById(id); isFolder = true; }
+    catch (e1) {
+      try { handle = DriveApp.getFileById(id); }
+      catch (e2) {
+        entry.error = 'File not found or not accessible: ' + (e2 && e2.message ? e2.message : e2);
+        out.push(entry);
+        continue;
+      }
+    }
+    entry.isFolder = isFolder;
+    try { entry.name = handle.getName(); } catch (_) {}
+    try {
+      var o = handle.getOwner();
+      entry.ownerEmail = o ? o.getEmail() : null;
+    } catch (_) { entry.ownerEmail = null; }
+    try { entry.trashed = handle.isTrashed(); } catch (_) {}
+    try {
+      var parents = handle.getParents();
+      var parentList = [];
+      while (parents.hasNext()) {
+        var p = parents.next();
+        try { parentList.push({ id: p.getId(), name: p.getName() }); }
+        catch (_) { parentList.push({ id: '(unreadable)' }); }
+      }
+      entry.parents = parentList;
+    } catch (_) { entry.parents = null; }
+    out.push(entry);
+  }
+  console.info('gmove debugLocateFiles: located ' + out.length + ' item(s)');
+  return out;
+}
+
+/**
  * DANGEROUS — wipes the entire jobs registry and all per-job state keys,
  * and drops every resume trigger. Only run if debugState() shows a
  * corrupted or clearly-abandoned run that will not clear via nudgeResume.
@@ -963,6 +1026,41 @@ function runBatch_impl_(setCurrentJobId) {
 function attemptTransfer_(item, newOwnerEmail) {
   var ts = new Date().toISOString();
   var moveToRoot = !!item.moveToRoot;
+
+  // Defense-in-depth ownership re-check RIGHT before the REST call.
+  //
+  // Even though runBatch_ now filters the registry by initiator so only
+  // the initiator's identity processes their own jobs, we belt-and-braces
+  // this here: a permissions.create call under an identity that does not
+  // own the item can still touch it in undocumented ways (e.g., when
+  // moveToNewOwnersRoot=true is combined with a file the caller has any
+  // access to at all). Refuse to invoke Drive if the caller isn't the
+  // current owner.
+  var activeUser = (getActiveUserEmail() || '').trim().toLowerCase();
+  var currentOwner = '';
+  try {
+    var handle = item.isFolder ? DriveApp.getFolderById(item.id) : DriveApp.getFileById(item.id);
+    var ownerObj = handle.getOwner();
+    currentOwner = ownerObj ? String(ownerObj.getEmail() || '').trim().toLowerCase() : '';
+  } catch (readErr) {
+    return {
+      timestamp: ts, id: item.id, name: item.name, path: item.path,
+      isFolder: !!item.isFolder, moveToRoot: moveToRoot,
+      status: STATUS.FAILED,
+      message: 'Refused to transfer — could not read item to verify ownership: ' +
+        (readErr && readErr.message ? readErr.message : String(readErr))
+    };
+  }
+  if (!currentOwner || currentOwner !== activeUser) {
+    return {
+      timestamp: ts, id: item.id, name: item.name, path: item.path,
+      isFolder: !!item.isFolder, moveToRoot: moveToRoot,
+      status: STATUS.SKIPPED_NOT_OWNED,
+      message: 'Current owner is ' + (currentOwner || '(unknown)') +
+        ', caller is ' + (activeUser || '(unknown)') +
+        '. Refused to invoke Drive REST — no risk of side-effects.'
+    };
+  }
   // sendNotificationEmail=true (Drive's default for role=owner).
   //
   // Drive's REST API explicitly rejects the combination
