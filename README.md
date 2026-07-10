@@ -250,15 +250,23 @@ to tear a specific one down.
   via "Shared with me" or a direct link — they just are not in the
   original folder anymore. The client confirmation dialog spells this out
   before commit.
-- **Job queue is visible to everyone allowlisted.** The `0 · Job queue`
-  card at the top of the page shows every job currently running or
-  queued, initiator → new owner, folder, progress bar, and a status pill.
-  All allowlisted users see all jobs. The client polls `listJobs()`
-  every 8 s while the registry is non-empty, respects the tab's
-  visibility state (no polling when backgrounded), and refreshes
-  immediately when the tab returns to visible. The RPC is cached at the
-  server for 2 s via `CacheService` so N pollers do not translate to N
-  ScriptProperties reads.
+- **Job queue is visible to everyone allowlisted; execution is
+  identity-scoped.** The `0 · Job queue` card at the top of the page
+  shows every job currently running or queued, initiator → new owner,
+  folder, progress bar, and a status pill — all allowlisted users see
+  all jobs, for coordination. But **only the initiator can advance
+  their own job.** Drive transfers execute as per-item REST calls under
+  the caller's OAuth grant; only the item's actual owner can setOwner
+  on it. A "kick this job forward" click, a client-side auto-nudge,
+  and a scheduled resume trigger all pass through `runBatch_`, which
+  filters the registry to jobs whose `initiator` matches the current
+  `Session.getActiveUser().getEmail()`. Other users' jobs are invisible
+  to the current invocation. The client polls `listJobs()` every 8 s
+  while the registry is non-empty, respects the tab's visibility state
+  (no polling when backgrounded), and refreshes immediately when the
+  tab returns to visible. The RPC is cached at the server for 2 s via
+  `CacheService` so N pollers do not translate to N ScriptProperties
+  reads.
 - **Jobs run one at a time.** ScriptProperties holds a small
   `gmove.jobs.registry.v1` list of active jobs; each job's plan + log
   live under `gmove.jobs.state.<jobId>`. Only one is ever in

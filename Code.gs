@@ -799,18 +799,38 @@ function runBatch_() {
 }
 
 function runBatch_impl_(setCurrentJobId) {
+  // Identity check up front. Every attemptTransfer_ call is a Drive REST
+  // request that executes under the CURRENT USER's OAuth grant — only the
+  // item's actual owner can transfer it. If runBatch_ is entered by user B
+  // while user A's job sits at the top of the queue, B can't process A's
+  // files (they don't own them) and every attempt would return HTTP 403.
+  //
+  // Filter the registry to jobs where the initiator matches the identity
+  // running this code. In trigger context, active user is the trigger's
+  // installer (an installable time-driven trigger runs as whoever called
+  // ScriptApp.newTrigger — which is always the initiator of the commit
+  // that scheduled the resume, because ensureResumeTrigger_ is called from
+  // inside commitTransfer under that user's session).
+  var activeUser = (getActiveUserEmail() || '').trim().toLowerCase();
+
   // Pick + load under the lock so nothing else can grab or delete our job.
   var loaded = withScriptLock_(function () {
     migrateLegacyStateIfPresent_();
     var registry = pruneJobsRegistry(loadJobsRegistry_());
-    var job = pickNextJob(registry);
-    if (!job) {
-      saveJobsRegistry_(registry);
-      invalidateRegistryCache_();
-      return null;
+    // Only consider jobs THIS identity can actually advance. Other users'
+    // jobs stay untouched — their own runBatch_ invocations pick them up.
+    var mine = [];
+    for (var i = 0; i < registry.length; i++) {
+      var candidate = registry[i];
+      if (!candidate || !candidate.initiator) continue;
+      if (String(candidate.initiator).trim().toLowerCase() === activeUser) mine.push(candidate);
     }
+    var job = pickNextJob(mine);
+    if (!job) return null;
     if (job.status === 'queued') {
       job.status = 'running';
+      // Save the full registry (job is a reference into it, so the status
+      // mutation is visible through the original array).
       saveJobsRegistry_(registry);
       invalidateRegistryCache_();
     }
@@ -894,10 +914,20 @@ function runBatch_impl_(setCurrentJobId) {
                     (mailStatus.error || ''));
       updateJobMeta_(job.jobId, { status: 'report_pending', processed: state.cursor });
     }
-    // Whether success or retention, if there are more jobs waiting, kick a
-    // near-future trigger so runBatch_ picks the next one up.
+    // Whether success or retention, if THIS user has more jobs waiting,
+    // schedule a follow-up trigger. Only this user's own trigger can
+    // advance their jobs (Drive OAuth is per-user); other users' jobs are
+    // driven by their own runBatch_ invocations, so we do NOT schedule
+    // for them here.
     var registry = pruneJobsRegistry(loadJobsRegistry_());
-    if (registry.length > 0) ensureResumeTrigger_(10 * 1000);
+    var myPending = 0;
+    for (var i = 0; i < registry.length; i++) {
+      var r = registry[i];
+      if (!r || !r.initiator) continue;
+      if (String(r.initiator).trim().toLowerCase() !== activeUser) continue;
+      if (r.status === 'queued' || r.status === 'report_pending') myPending++;
+    }
+    if (myPending > 0) ensureResumeTrigger_(10 * 1000);
   });
   return {
     done: mailStatus.sent,

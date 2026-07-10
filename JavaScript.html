@@ -147,10 +147,20 @@
     var now = Date.now();
     if (now - lastAutoNudgeAt < AUTO_NUDGE_COOLDOWN) return;
 
+    // Only nudge jobs THIS user initiated. Drive transfers execute under
+    // the caller's OAuth grant, so a nudge from bino's tab against
+    // cdreyer's job would attempt setOwner on files bino doesn't own and
+    // fail permission-denied on every item. Each user's jobs must be
+    // advanced by their own session or their own scheduled trigger.
+    var me = (lastQueueEmail || '').trim().toLowerCase();
+    if (!me) return;
+
     var stalled = null;
     for (var i = 0; i < jobs.length; i++) {
       var j = jobs[i];
       if (j.status !== 'running') continue;
+      if (!j.initiator) continue;
+      if (String(j.initiator).trim().toLowerCase() !== me) continue;
       var lastAt = j.checkpointedAt || j.startedAt;
       if (!lastAt) continue;
       var age = now - new Date(lastAt).getTime();
@@ -223,14 +233,24 @@
   function actionsBlock(job) {
     var wrap = document.createElement('div');
     wrap.className = 'pt-queue-card__actions';
-    var canNudge = (job.status === 'running' || job.status === 'report_pending');
+    // Only the initiator can nudge — Drive transfers execute under the
+    // caller's OAuth grant, so a nudge from a different tab would attempt
+    // setOwner on files that tab's user doesn't own and fail 403 on every
+    // item. Kicking someone else's job from your browser used to silently
+    // wreck their run under your identity; block that at the UI level.
+    var me = (lastQueueEmail || '').trim().toLowerCase();
+    var isMine = job.initiator && String(job.initiator).trim().toLowerCase() === me;
+    var hasWork = (job.status === 'running' || job.status === 'report_pending');
+    var canNudge = isMine && hasWork;
     var nudgeBtn = document.createElement('button');
     nudgeBtn.type = 'button';
     nudgeBtn.className = 'pt-btn pt-btn--outline pt-btn--small';
     nudgeBtn.textContent = 'Nudge';
     nudgeBtn.title = canNudge
       ? 'Force runBatch_ NOW rather than wait for the resume trigger or 90s auto-nudge.'
-      : 'Only running or report_pending jobs can be nudged directly.';
+      : (!isMine
+          ? 'Only the initiator (' + (job.initiator || 'unknown') + ') can nudge this job. Drive transfers run under the caller\'s OAuth grant.'
+          : 'Only running or report_pending jobs can be nudged directly.');
     nudgeBtn.disabled = !canNudge;
     nudgeBtn.addEventListener('click', function () { nudgeJob(job, nudgeBtn); });
 
